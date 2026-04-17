@@ -75,10 +75,12 @@ class MediaDownloader:
     
     async def _download_media(self, queue_id):
         """Download media from queue"""
-        from database import async_session
+        from database.manager import db_manager
         
         # Use a fresh session for this download
-        async with async_session() as session:
+        session = await db_manager.get_session()
+        
+        try:
             try:
                 # Get queue item
                 result = await session.execute(
@@ -143,15 +145,17 @@ class MediaDownloader:
                 
             except Exception as e:
                 logger.error(f"Download failed for queue {queue_id}: {e}")
-                async with async_session() as err_session:
-                    result = await err_session.execute(
-                        select(DownloadQueue).where(DownloadQueue.id == queue_id)
-                    )
-                    queue_item = result.scalar_one_or_none()
-                    if queue_item:
-                        queue_item.status = 'failed'
-                        queue_item.error_message = str(e)
-                        await err_session.commit()
+                # Update error in same session
+                result = await session.execute(
+                    select(DownloadQueue).where(DownloadQueue.id == queue_id)
+                )
+                queue_item = result.scalar_one_or_none()
+                if queue_item:
+                    queue_item.status = 'failed'
+                    queue_item.error_message = str(e)
+                    await session.commit()
+        finally:
+            await session.close()
     
     def _get_output_path_sync(self, media, chat):
         """Generate output path for media (synchronous version)"""

@@ -1,6 +1,7 @@
 from telethon import TelegramClient
 from telethon.tl.types import Channel, Chat, User, MessageMediaPhoto, MessageMediaDocument
 from .config import settings
+from database.manager import db_manager
 import logging
 import os
 
@@ -43,7 +44,13 @@ class TelegramMediaClient:
                 raise Exception("Session is not authorized. Please create a valid session file.")
             
             me = await self.client.get_me()
+            
+            # Set current account in database manager for data isolation
+            db_manager.set_current_account(self.current_session)
+            
             logger.info(f"Connected as {me.first_name} (@{me.username}) using session: {self.current_session}")
+            logger.info(f"Database isolated to account: {self.current_session}")
+            
             return me
         except Exception as e:
             logger.error(f"Failed to connect: {e}")

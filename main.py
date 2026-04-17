@@ -23,8 +23,16 @@ async def auto_sync_task():
         try:
             await asyncio.sleep(settings.SYNC_INTERVAL)
             
-            logger.info("Running auto-sync...")
-            async with async_session() as session:
+            # Only sync if there's an active account
+            from database.manager import db_manager
+            if not db_manager.current_account:
+                logger.debug("No active account, skipping auto-sync")
+                continue
+            
+            logger.info(f"Running auto-sync for account: {db_manager.current_account}")
+            session = await db_manager.get_session()
+            
+            try:
                 scanner = MediaScanner(session)
                 
                 # Scan for new chats
@@ -33,6 +41,8 @@ async def auto_sync_task():
                 # Scan for new media
                 count = await scanner.scan_all_media()
                 logger.info(f"Auto-sync completed: {count} new media items")
+            finally:
+                await session.close()
                 
         except Exception as e:
             logger.error(f"Auto-sync failed: {e}")
@@ -44,9 +54,19 @@ async def download_queue_worker():
     
     while True:
         try:
-            async with async_session() as session:
+            # Only process if there's an active account
+            from database.manager import db_manager
+            if not db_manager.current_account:
+                await asyncio.sleep(5)
+                continue
+            
+            session = await db_manager.get_session()
+            
+            try:
                 downloader = MediaDownloader(session)
                 await downloader.process_queue()
+            finally:
+                await session.close()
                 
         except Exception as e:
             logger.error(f"Download queue worker error: {e}")
