@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: telegram-media-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: telegram_media
+      POSTGRES_USER: telegram
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  telegram-media-server:
+    build: .
+    container_name: telegram-media-server
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      - API_ID=${API_ID}
+      - API_HASH=${API_HASH}
+      - SESSION_PATH=${SESSION_PATH:-/data/session/account.session}
+      - DATABASE_URL=postgresql+asyncpg://telegram:${POSTGRES_PASSWORD:-changeme}@postgres/telegram_media
+      - DOWNLOAD_PATH=${DOWNLOAD_PATH:-/data/downloads}
+      - SYNC_INTERVAL=${SYNC_INTERVAL:-600}
+      - MAX_PARALLEL_DOWNLOADS=${MAX_PARALLEL_DOWNLOADS:-3}
+    env_file:
+      - .env
+
+volumes:
+  postgres_data:

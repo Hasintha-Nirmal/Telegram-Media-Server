@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  telegram-media-server:
+    build: .
+    container_name: telegram-media-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      - API_ID=${API_ID}
+      - API_HASH=${API_HASH}
+      - SESSION_PATH=${SESSION_PATH:-/data/session/account.session}
+      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:////data/database/media.db}
+      - DOWNLOAD_PATH=${DOWNLOAD_PATH:-/data/downloads}
+      - SYNC_INTERVAL=${SYNC_INTERVAL:-600}
+      - MAX_PARALLEL_DOWNLOADS=${MAX_PARALLEL_DOWNLOADS:-3}
+    env_file:
+      - .env
