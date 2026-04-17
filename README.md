@@ -34,8 +34,8 @@
 
 **1. Clone the repo**
 ```bash
-git clone https://github.com/Hasintha-Nirmal/Telegram-base-app.git
-cd Telegram-base-app
+git clone https://github.com/Hasintha-Nirmal/Telegram-Media-Server.git
+cd Telegram-Media-Server
 ```
 
 **2. Copy environment file**
