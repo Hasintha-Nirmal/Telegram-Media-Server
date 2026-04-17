@@ -122,9 +122,11 @@
                 <button class="button button-secondary" onclick="scanAndViewMessages()">💭 Scan & View Messages (1000 latest)</button>
                 <button class="button" onclick="viewExistingMedia()">📂 View Existing Media</button>
                 <button class="button" onclick="viewExistingMessages()">💬 View Existing Messages</button>
+                <button class="button" onclick="fullRescanMedia()" style="background: #f56565;">🔄 Full Rescan Media</button>
             </div>
             <div class="info-box" style="margin-top: 15px;">
-                <strong>Scan:</strong> Fetches new data from Telegram (may take time)<br>
+                <strong>Scan:</strong> Fetches new data from Telegram (incremental)<br>
+                <strong>Full Rescan:</strong> Scans ALL messages from beginning (use if media is missing)<br>
                 <strong>View Existing:</strong> Shows already scanned data (instant)
             </div>
         </div>
@@ -229,6 +231,31 @@
             
             try {
                 const response = await fetch(`/api/scan/chat/${selectedChat.id}`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.count === 0) {
+                    showResults('<p style="text-align: center; padding: 40px;">No media found in this chat</p>');
+                    return;
+                }
+                
+                showResults('<div class="loading">Found ' + data.count + ' media items, loading...</div>');
+                await viewExistingMedia();
+            } catch (error) {
+                showResults('<p style="color: red;">Error: ' + error.message + '</p>');
+            }
+        }
+        
+        async function fullRescanMedia() {
+            if (!selectedChat) return;
+            
+            if (!confirm('This will scan ALL messages from the beginning. This may take several minutes. Continue?')) {
+                return;
+            }
+            
+            showResults('<div class="loading">Full rescan in progress for ' + escapeHtml(selectedChat.name) + ' (this may take a while)</div>');
+            
+            try {
+                const response = await fetch(`/api/scan/chat/${selectedChat.id}?full=true`, { method: 'POST' });
                 const data = await response.json();
                 
                 if (data.count === 0) {

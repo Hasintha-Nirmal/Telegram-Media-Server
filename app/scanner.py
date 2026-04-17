@@ -45,25 +45,30 @@ class MediaScanner:
         await self.db.commit()
         return chat
     
-    async def scan_chat_media(self, chat_id, incremental=True):
+    async def scan_chat_media(self, chat_id, incremental=True, force_full=False):
         """Scan media from a specific chat"""
-        logger.info(f"Scanning media from chat {chat_id}...")
+        logger.info(f"Scanning media from chat {chat_id}... (incremental={incremental}, force_full={force_full})")
         
         # Get sync state
         offset_id = 0
-        if incremental:
+        if incremental and not force_full:
             result = await self.db.execute(
                 select(SyncState).where(SyncState.chat_id == chat_id)
             )
             sync_state = result.scalar_one_or_none()
             if sync_state and sync_state.last_message_id:
                 offset_id = sync_state.last_message_id
+                logger.info(f"Incremental scan starting from message_id: {offset_id}")
+        else:
+            logger.info(f"Full scan starting from beginning")
         
         # Fetch media messages
         media_messages = await telegram_client.get_media_messages(
             chat_id, 
             offset_id=offset_id
         )
+        
+        logger.info(f"Found {len(media_messages)} media messages")
         
         # Save media to database
         saved_count = 0
@@ -73,6 +78,9 @@ class MediaScanner:
             await self._save_media(media_data)
             saved_count += 1
             last_message_id = max(last_message_id, media_data['message_id'])
+            
+            # Log each media item
+            logger.info(f"Saved media: {media_data.get('file_name', 'unnamed')} (type: {media_data.get('media_type')}, size: {media_data.get('file_size')})")
         
         # Update sync state
         await self._update_sync_state(chat_id, last_message_id, saved_count)

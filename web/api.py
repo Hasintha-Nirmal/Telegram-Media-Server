@@ -156,10 +156,14 @@ async def scan_chats(db: AsyncSession = Depends(get_session)):
 
 
 @app.post("/api/scan/chat/{chat_id}")
-async def scan_chat_media(chat_id: int, db: AsyncSession = Depends(get_session)):
+async def scan_chat_media(
+    chat_id: int,
+    full: bool = Query(False, description="Force full scan instead of incremental"),
+    db: AsyncSession = Depends(get_session)
+):
     """Scan media from specific chat"""
     scanner = MediaScanner(db)
-    count = await scanner.scan_chat_media(chat_id)
+    count = await scanner.scan_chat_media(chat_id, incremental=not full, force_full=full)
     return {'count': count}
 
 
