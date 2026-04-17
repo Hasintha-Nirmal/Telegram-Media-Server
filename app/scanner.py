@@ -49,24 +49,41 @@ class MediaScanner:
         """Scan media from a specific chat"""
         logger.info(f"Scanning media from chat {chat_id}... (incremental={incremental}, force_full={force_full})")
         
-        # Get sync state
-        offset_id = 0
-        if incremental and not force_full:
+        try:
+            # First verify the chat exists in our database
             result = await self.db.execute(
-                select(SyncState).where(SyncState.chat_id == chat_id)
+                select(Chat).where(Chat.id == chat_id)
             )
-            sync_state = result.scalar_one_or_none()
-            if sync_state and sync_state.last_message_id:
-                offset_id = sync_state.last_message_id
-                logger.info(f"Incremental scan starting from message_id: {offset_id}")
-        else:
-            logger.info(f"Full scan starting from beginning")
-        
-        # Fetch media messages
-        media_messages = await telegram_client.get_media_messages(
-            chat_id, 
-            offset_id=offset_id
-        )
+            chat = result.scalar_one_or_none()
+            
+            if not chat:
+                logger.error(f"Chat {chat_id} not found in database. Run 'Load Chats' first.")
+                raise ValueError(f"Chat {chat_id} not found. Please load chats first.")
+            
+            # Get sync state
+            offset_id = 0
+            if incremental and not force_full:
+                result = await self.db.execute(
+                    select(SyncState).where(SyncState.chat_id == chat_id)
+                )
+                sync_state = result.scalar_one_or_none()
+                if sync_state and sync_state.last_message_id:
+                    offset_id = sync_state.last_message_id
+                    logger.info(f"Incremental scan starting from message_id: {offset_id}")
+            else:
+                logger.info(f"Full scan starting from beginning")
+            
+            # Fetch media messages
+            media_messages = await telegram_client.get_media_messages(
+                chat_id, 
+                offset_id=offset_id
+            )
+        except ValueError as e:
+            # Re-raise validation errors
+            raise
+        except Exception as e:
+            logger.error(f"Error scanning media from chat {chat_id}: {e}")
+            raise
         
         logger.info(f"Found {len(media_messages)} media messages")
         
@@ -93,6 +110,16 @@ class MediaScanner:
         logger.info(f"Scanning messages from chat {chat_id}...")
         
         try:
+            # First verify the chat exists in our database
+            result = await self.db.execute(
+                select(Chat).where(Chat.id == chat_id)
+            )
+            chat = result.scalar_one_or_none()
+            
+            if not chat:
+                logger.error(f"Chat {chat_id} not found in database. Run 'Load Chats' first.")
+                raise ValueError(f"Chat {chat_id} not found. Please load chats first.")
+            
             # Get sync state
             offset_id = 0
             if incremental:

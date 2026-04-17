@@ -124,28 +124,52 @@
         <!-- New Session Modal -->
         <div class="modal" id="new-session-modal">
             <div class="modal-content">
-                <div class="modal-header">Create New Session</div>
-                <div class="form-group">
-                    <label>Session Name</label>
-                    <input type="text" id="new-session-name" placeholder="e.g., my_account">
+                <div class="modal-header" id="modal-title">Create New Session</div>
+                
+                <!-- Step 1: Phone and Session Name -->
+                <div id="step-phone">
+                    <div class="form-group">
+                        <label>Session Name</label>
+                        <input type="text" id="new-session-name" placeholder="e.g., my_account">
+                    </div>
+                    <div class="form-group">
+                        <label>Phone Number (with country code)</label>
+                        <input type="text" id="new-session-phone" placeholder="e.g., +1234567890">
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="button" onclick="closeNewSessionModal()">Cancel</button>
+                        <button class="button button-secondary" onclick="sendCode()">Send Code</button>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Phone Number (with country code)</label>
-                    <input type="text" id="new-session-phone" placeholder="e.g., +1234567890">
-                </div>
-                <div id="code-section" style="display: none;">
+                
+                <!-- Step 2: Verification Code -->
+                <div id="step-code" style="display: none;">
+                    <div class="info-box">
+                        ✅ Code sent! Check your Telegram app and enter the code below.
+                    </div>
                     <div class="form-group">
                         <label>Verification Code</label>
-                        <input type="text" id="new-session-code" placeholder="Enter code from Telegram">
+                        <input type="text" id="new-session-code" placeholder="Enter code from Telegram" maxlength="5">
                     </div>
-                    <div class="form-group">
-                        <label>2FA Password (if enabled)</label>
-                        <input type="password" id="new-session-password" placeholder="Leave empty if not enabled">
+                    <div style="display: flex; gap: 10px;">
+                        <button class="button" onclick="closeNewSessionModal()">Cancel</button>
+                        <button class="button button-secondary" onclick="verifyCode()">Verify Code</button>
                     </div>
                 </div>
-                <div style="display: flex; gap: 10px;">
-                    <button class="button" onclick="closeNewSessionModal()">Cancel</button>
-                    <button class="button button-secondary" id="create-session-btn" onclick="createSession()">Send Code</button>
+                
+                <!-- Step 3: 2FA Password (if needed) -->
+                <div id="step-password" style="display: none;">
+                    <div class="info-box" style="background: #fff3cd; border-color: #ffc107;">
+                        🔐 Two-factor authentication is enabled on your account. Please enter your cloud password.
+                    </div>
+                    <div class="form-group">
+                        <label>2FA Password (Cloud Password)</label>
+                        <input type="password" id="new-session-password" placeholder="Enter your 2FA password">
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="button" onclick="closeNewSessionModal()">Cancel</button>
+                        <button class="button button-secondary" onclick="verifyPassword()">Verify Password</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -679,15 +703,19 @@
                 });
                 
                 if (response.ok) {
-                    alert('✅ Switched to ' + sessionName);
+                    alert('✅ Switched to ' + sessionName + '\n\nClick "Load Chats" to see chats from this account.');
                     closeSessionModal();
                     await loadCurrentSession();
-                    // Reload chats for new account
+                    
+                    // Clear everything for new account
                     allChats = [];
                     selectedChat = null;
-                    document.getElementById('chat-list').innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">Click "Load Chats" to get started</p>';
+                    document.getElementById('chat-list').innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">Click "Load Chats" to get started with this account</p>';
+                    document.getElementById('chat-stats').classList.add('hidden');
                     document.getElementById('action-panel').classList.add('hidden');
                     document.getElementById('results-panel').classList.add('hidden');
+                    document.getElementById('chat-search').value = '';
+                    document.getElementById('type-filter').value = '';
                 } else {
                     const error = await response.json();
                     alert('Error: ' + error.detail);
@@ -720,21 +748,28 @@
         }
         
         function openNewSessionModal() {
+            // Reset all fields and steps
             document.getElementById('new-session-name').value = '';
             document.getElementById('new-session-phone').value = '';
             document.getElementById('new-session-code').value = '';
             document.getElementById('new-session-password').value = '';
-            document.getElementById('code-section').style.display = 'none';
-            document.getElementById('create-session-btn').textContent = 'Send Code';
-            document.getElementById('create-session-btn').onclick = createSession;
+            
+            // Show step 1, hide others
+            document.getElementById('step-phone').style.display = 'block';
+            document.getElementById('step-code').style.display = 'none';
+            document.getElementById('step-password').style.display = 'none';
+            document.getElementById('modal-title').textContent = 'Create New Session';
+            
             document.getElementById('new-session-modal').classList.add('active');
         }
         
         function closeNewSessionModal() {
             document.getElementById('new-session-modal').classList.remove('active');
+            pendingSessionName = null;
+            pendingSessionPhone = null;
         }
         
-        async function createSession() {
+        async function sendCode() {
             const sessionName = document.getElementById('new-session-name').value.trim();
             const phone = document.getElementById('new-session-phone').value.trim();
             
@@ -757,22 +792,24 @@
                     pendingSessionName = sessionName + '.session';
                     pendingSessionPhone = phone;
                     
-                    alert('✅ Code sent to ' + phone + '\nCheck your Telegram app!');
-                    document.getElementById('code-section').style.display = 'block';
-                    document.getElementById('create-session-btn').textContent = 'Verify Code';
-                    document.getElementById('create-session-btn').onclick = verifySession;
+                    // Move to step 2
+                    document.getElementById('step-phone').style.display = 'none';
+                    document.getElementById('step-code').style.display = 'block';
+                    document.getElementById('modal-title').textContent = 'Enter Verification Code';
+                    
+                    // Focus on code input
+                    setTimeout(() => document.getElementById('new-session-code').focus(), 100);
                 } else {
                     const error = await response.json();
                     alert('Error: ' + error.detail);
                 }
             } catch (error) {
-                alert('Error creating session: ' + error.message);
+                alert('Error sending code: ' + error.message);
             }
         }
         
-        async function verifySession() {
+        async function verifyCode() {
             const code = document.getElementById('new-session-code').value.trim();
-            const password = document.getElementById('new-session-password').value.trim();
             
             if (!code) {
                 alert('Please enter the verification code');
@@ -786,22 +823,71 @@
                     body: JSON.stringify({
                         session_name: pendingSessionName,
                         phone: pendingSessionPhone,
-                        code: code,
-                        password: password || null
+                        code: code
                     })
                 });
                 
                 if (response.ok) {
                     const data = await response.json();
-                    alert('✅ Session created successfully!\nLogged in as: ' + data.user.first_name);
-                    closeNewSessionModal();
-                    await switchSession(pendingSessionName);
+                    
+                    if (data.requires_2fa) {
+                        // Move to step 3 (2FA password)
+                        document.getElementById('step-code').style.display = 'none';
+                        document.getElementById('step-password').style.display = 'block';
+                        document.getElementById('modal-title').textContent = '2FA Required';
+                        
+                        // Focus on password input
+                        setTimeout(() => document.getElementById('new-session-password').focus(), 100);
+                    } else {
+                        // Success without 2FA!
+                        const userName = data.user.first_name;
+                        closeNewSessionModal();
+                        alert('✅ Session created successfully!\n\nLogged in as: ' + userName + '\n\nClick "Switch Account" to use this account.');
+                        
+                        // Reload session list
+                        await loadCurrentSession();
+                    }
                 } else {
                     const error = await response.json();
                     alert('Error: ' + error.detail);
                 }
             } catch (error) {
                 alert('Error verifying code: ' + error.message);
+            }
+        }
+        
+        async function verifyPassword() {
+            const password = document.getElementById('new-session-password').value.trim();
+            
+            if (!password) {
+                alert('Please enter your 2FA password');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/sessions/password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_name: pendingSessionName,
+                        password: password
+                    })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    const userName = data.user.first_name;
+                    closeNewSessionModal();
+                    alert('✅ Session created successfully with 2FA!\n\nLogged in as: ' + userName + '\n\nClick "Switch Account" to use this account.');
+                    
+                    // Reload session list
+                    await loadCurrentSession();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (error) {
+                alert('Error verifying password: ' + error.message);
             }
         }
         

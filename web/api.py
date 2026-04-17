@@ -36,7 +36,10 @@ class SessionVerifyRequest(BaseModel):
     session_name: str
     phone: str
     code: str
-    password: Optional[str] = None
+
+class SessionPasswordRequest(BaseModel):
+    session_name: str
+    password: str
 
 class SessionSwitchRequest(BaseModel):
     session_name: str
@@ -140,7 +143,19 @@ async def verify_session(request: SessionVerifyRequest):
         result = await telegram_client.verify_code(
             request.session_name,
             request.phone,
-            request.code,
+            request.code
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/sessions/password")
+async def verify_password(request: SessionPasswordRequest):
+    """Verify 2FA password after code verification"""
+    try:
+        result = await telegram_client.verify_password(
+            request.session_name,
             request.password
         )
         return result
@@ -149,10 +164,15 @@ async def verify_session(request: SessionVerifyRequest):
 
 
 @app.post("/api/sessions/switch")
-async def switch_session(request: SessionSwitchRequest):
+async def switch_session(request: dict):
     """Switch to a different session"""
     try:
-        user = await telegram_client.connect(request.session_name)
+        session_name = request.get('session_name')
+        if not session_name:
+            raise HTTPException(status_code=400, detail="session_name is required")
+        
+        logger.info(f"Switching to session: {session_name}")
+        user = await telegram_client.connect(session_name)
         return {
             'status': 'success',
             'user': {
@@ -162,7 +182,10 @@ async def switch_session(request: SessionSwitchRequest):
                 'phone': user.phone
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Failed to switch session: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -287,9 +310,15 @@ async def scan_chat_media(
     db: AsyncSession = Depends(get_session)
 ):
     """Scan media from specific chat"""
-    scanner = MediaScanner(db)
-    count = await scanner.scan_chat_media(chat_id, incremental=not full, force_full=full)
-    return {'count': count}
+    try:
+        scanner = MediaScanner(db)
+        count = await scanner.scan_chat_media(chat_id, incremental=not full, force_full=full)
+        return {'count': count}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error scanning chat {chat_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to scan chat: {str(e)}")
 
 
 @app.post("/api/scan/chat/{chat_id}/messages")
@@ -299,9 +328,15 @@ async def scan_chat_messages(
     db: AsyncSession = Depends(get_session)
 ):
     """Scan text messages from specific chat"""
-    scanner = MediaScanner(db)
-    count = await scanner.scan_chat_messages(chat_id, limit=limit)
-    return {'count': count}
+    try:
+        scanner = MediaScanner(db)
+        count = await scanner.scan_chat_messages(chat_id, limit=limit)
+        return {'count': count}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error scanning messages from chat {chat_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to scan messages: {str(e)}")
 
 
 @app.post("/api/download/{media_id}")

@@ -11,6 +11,7 @@ class TelegramMediaClient:
     def __init__(self):
         self.client = None
         self.current_session = None
+        self.pending_clients = {}  # Store pending session clients
         
     async def connect(self, session_name: str = None):
         """Connect to Telegram using specified session"""
@@ -55,6 +56,14 @@ class TelegramMediaClient:
             if session_path.endswith('.session'):
                 session_path = session_path[:-8]
             
+            # Clean up any existing pending client for this session
+            if session_name in self.pending_clients:
+                try:
+                    await self.pending_clients[session_name].disconnect()
+                except:
+                    pass
+                del self.pending_clients[session_name]
+            
             client = TelegramClient(
                 session_path,
                 settings.API_ID,
@@ -65,6 +74,11 @@ class TelegramMediaClient:
             
             # Send code request
             await client.send_code_request(phone)
+            
+            # Store client for verification step
+            self.pending_clients[session_name] = client
+            
+            logger.info(f"Code sent to {phone} for session {session_name}")
             
             return {
                 'session_name': session_name,
@@ -77,31 +91,118 @@ class TelegramMediaClient:
     
     async def verify_code(self, session_name: str, phone: str, code: str, password: str = None):
         """Verify code and complete session creation"""
-        try:
-            session_path = os.path.join(settings.SESSION_DIR, session_name)
-            if session_path.endswith('.session'):
-                session_path = session_path[:-8]
-            
+        session_path = os.path.join(settings.SESSION_DIR, session_name)
+        if session_path.endswith('.session'):
+            session_path = session_path[:-8]
+        
+        # Try to reuse pending client first
+        client = self.pending_clients.get(session_name)
+        
+        if not client:
+            # If no pending client, create new one (user might have refreshed page)
+            logger.warning(f"No pending client for {session_name}, creating new connection")
             client = TelegramClient(
                 session_path,
                 settings.API_ID,
                 settings.API_HASH
             )
-            
             await client.connect()
-            
+        
+        try:
             # Sign in with code
-            try:
-                await client.sign_in(phone, code)
-            except Exception as e:
-                # If 2FA is enabled, try with password
-                if password:
-                    await client.sign_in(password=password)
-                else:
-                    raise Exception("Two-factor authentication enabled. Password required.")
+            await client.sign_in(phone, code)
             
+            # Success! Get user info
             me = await client.get_me()
             await client.disconnect()
+            
+            # Clean up pending client
+            if session_name in self.pending_clients:
+                del self.pending_clients[session_name]
+            
+            logger.info(f"Successfully created session for {me.first_name} (@{me.username})")
+            
+            return {
+                'session_name': session_name,
+                'user': {
+                    'id': me.id,
+                    'first_name': me.first_name,
+                    'username': me.username,
+                    'phone': me.phone
+                },
+                'status': 'success',
+                'requires_2fa': False
+            }
+            
+        except Exception as sign_in_error:
+            error_msg = str(sign_in_error)
+            logger.error(f"Sign in error: {error_msg}")
+            
+            # Check if 2FA is required
+            if 'SessionPasswordNeededError' in str(type(sign_in_error)) or \
+               'password' in error_msg.lower() or \
+               'two-step' in error_msg.lower() or \
+               'two-factor' in error_msg.lower():
+                
+                # 2FA is required - keep client alive and ask for password
+                logger.info(f"2FA required for {session_name}")
+                return {
+                    'session_name': session_name,
+                    'status': 'requires_2fa',
+                    'requires_2fa': True,
+                    'message': 'Two-factor authentication is enabled. Please enter your password.'
+                }
+            
+            # Other errors - clean up and report
+            try:
+                await client.disconnect()
+                if session_name in self.pending_clients:
+                    del self.pending_clients[session_name]
+                    
+                session_file = session_path + '.session'
+                if os.path.exists(session_file):
+                    os.remove(session_file)
+                    logger.info(f"Cleaned up failed session file: {session_file}")
+            except:
+                pass
+            
+            # Provide user-friendly error messages
+            if 'expired' in error_msg.lower():
+                raise Exception("Verification code expired. Please start over and request a new code.")
+            elif 'invalid' in error_msg.lower() or 'phone_code_invalid' in error_msg.lower():
+                raise Exception("Invalid verification code. Please check the code and try again, or start over if it expired.")
+            elif 'phone_code_hash' in error_msg.lower() or 'key is not registered' in error_msg.lower():
+                raise Exception("Session expired. Please close this dialog and start over by clicking 'Add Account' again.")
+            elif 'flood' in error_msg.lower():
+                raise Exception("Too many attempts. Please wait a few minutes and try again.")
+            else:
+                raise Exception(f"Sign in failed: {error_msg}")
+    
+    async def verify_password(self, session_name: str, password: str):
+        """Verify 2FA password after code verification"""
+        session_path = os.path.join(settings.SESSION_DIR, session_name)
+        if session_path.endswith('.session'):
+            session_path = session_path[:-8]
+        
+        # Get pending client
+        client = self.pending_clients.get(session_name)
+        
+        if not client:
+            raise Exception("Session expired. Please start over by clicking 'Add Account' again.")
+        
+        try:
+            # Sign in with password
+            await client.sign_in(password=password)
+            
+            # Success! Get user info
+            me = await client.get_me()
+            await client.disconnect()
+            
+            # Clean up pending client
+            if session_name in self.pending_clients:
+                del self.pending_clients[session_name]
+            
+            logger.info(f"Successfully created session with 2FA for {me.first_name} (@{me.username})")
             
             return {
                 'session_name': session_name,
@@ -113,9 +214,28 @@ class TelegramMediaClient:
                 },
                 'status': 'success'
             }
+            
         except Exception as e:
-            logger.error(f"Failed to verify code: {e}")
-            raise
+            error_msg = str(e)
+            logger.error(f"2FA password error: {error_msg}")
+            
+            # Clean up on failure
+            try:
+                await client.disconnect()
+                if session_name in self.pending_clients:
+                    del self.pending_clients[session_name]
+                    
+                session_file = session_path + '.session'
+                if os.path.exists(session_file):
+                    os.remove(session_file)
+            except:
+                pass
+            
+            # Provide user-friendly error
+            if 'password' in error_msg.lower() and 'invalid' in error_msg.lower():
+                raise Exception("Incorrect 2FA password. Please try again or start over.")
+            else:
+                raise Exception(f"2FA verification failed: {error_msg}")
     
     def list_sessions(self):
         """List all available session files"""
