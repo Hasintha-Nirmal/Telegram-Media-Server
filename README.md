@@ -11,8 +11,9 @@ A self-hosted media server that indexes all media from your Telegram chats and p
 ## ✨ Features
 
 ### Core Features
-- � **Session-based authentication** - No password required, uses existing Telegram session
-- � **Automatic discovery** - Scans all your chats (channels, groups, private chats, bots)
+- 🔐 **Session-based authentication** - No password required, uses existing Telegram session
+- 👥 **Multi-account support** - Create, upload, and switch between multiple Telegram accounts in the web UI
+- 🔍 **Automatic discovery** - Scans all your chats (channels, groups, private chats, bots)
 - 🎥 **Video streaming** - Stream videos directly in browser with seeking support
 - 🔍 **Powerful search** - Search by filename, chat, type, size, and date
 - 📥 **Smart downloads** - Queue-based system with parallel downloads

@@ -2,6 +2,7 @@ from telethon import TelegramClient
 from telethon.tl.types import Channel, Chat, User, MessageMediaPhoto, MessageMediaDocument
 from .config import settings
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -9,12 +10,29 @@ logger = logging.getLogger(__name__)
 class TelegramMediaClient:
     def __init__(self):
         self.client = None
+        self.current_session = None
         
-    async def connect(self):
-        """Connect to Telegram using existing session"""
+    async def connect(self, session_name: str = None):
+        """Connect to Telegram using specified session"""
         try:
+            # Disconnect existing client if any
+            if self.client:
+                await self.client.disconnect()
+            
+            # Determine session path
+            if session_name:
+                session_path = os.path.join(settings.SESSION_DIR, session_name)
+            else:
+                session_path = settings.SESSION_PATH
+            
+            # Remove .session extension if present
+            if session_path.endswith('.session'):
+                session_path = session_path[:-8]
+            
+            self.current_session = os.path.basename(session_path)
+            
             self.client = TelegramClient(
-                settings.SESSION_PATH.replace('.session', ''),
+                session_path,
                 settings.API_ID,
                 settings.API_HASH
             )
@@ -24,11 +42,107 @@ class TelegramMediaClient:
                 raise Exception("Session is not authorized. Please create a valid session file.")
             
             me = await self.client.get_me()
-            logger.info(f"Connected as {me.first_name} (@{me.username})")
-            return True
+            logger.info(f"Connected as {me.first_name} (@{me.username}) using session: {self.current_session}")
+            return me
         except Exception as e:
             logger.error(f"Failed to connect: {e}")
             raise
+    
+    async def create_session(self, session_name: str, phone: str):
+        """Create a new session interactively"""
+        try:
+            session_path = os.path.join(settings.SESSION_DIR, session_name)
+            if session_path.endswith('.session'):
+                session_path = session_path[:-8]
+            
+            client = TelegramClient(
+                session_path,
+                settings.API_ID,
+                settings.API_HASH
+            )
+            
+            await client.connect()
+            
+            # Send code request
+            await client.send_code_request(phone)
+            
+            return {
+                'session_name': session_name,
+                'phone': phone,
+                'status': 'code_sent'
+            }
+        except Exception as e:
+            logger.error(f"Failed to create session: {e}")
+            raise
+    
+    async def verify_code(self, session_name: str, phone: str, code: str, password: str = None):
+        """Verify code and complete session creation"""
+        try:
+            session_path = os.path.join(settings.SESSION_DIR, session_name)
+            if session_path.endswith('.session'):
+                session_path = session_path[:-8]
+            
+            client = TelegramClient(
+                session_path,
+                settings.API_ID,
+                settings.API_HASH
+            )
+            
+            await client.connect()
+            
+            # Sign in with code
+            try:
+                await client.sign_in(phone, code)
+            except Exception as e:
+                # If 2FA is enabled, try with password
+                if password:
+                    await client.sign_in(password=password)
+                else:
+                    raise Exception("Two-factor authentication enabled. Password required.")
+            
+            me = await client.get_me()
+            await client.disconnect()
+            
+            return {
+                'session_name': session_name,
+                'user': {
+                    'id': me.id,
+                    'first_name': me.first_name,
+                    'username': me.username,
+                    'phone': me.phone
+                },
+                'status': 'success'
+            }
+        except Exception as e:
+            logger.error(f"Failed to verify code: {e}")
+            raise
+    
+    def list_sessions(self):
+        """List all available session files"""
+        try:
+            sessions = []
+            if os.path.exists(settings.SESSION_DIR):
+                for file in os.listdir(settings.SESSION_DIR):
+                    if file.endswith('.session'):
+                        sessions.append(file)
+            return sessions
+        except Exception as e:
+            logger.error(f"Failed to list sessions: {e}")
+            return []
+    
+    async def get_current_user(self):
+        """Get current logged in user info"""
+        if self.client and await self.client.is_user_authorized():
+            me = await self.client.get_me()
+            return {
+                'id': me.id,
+                'first_name': me.first_name,
+                'last_name': me.last_name,
+                'username': me.username,
+                'phone': me.phone,
+                'session': self.current_session
+            }
+        return None
     
     async def disconnect(self):
         """Disconnect from Telegram"""

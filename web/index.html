@@ -66,6 +66,25 @@
         .hidden { display: none; }
         
         .info-box { background: #e6f7ff; border-left: 4px solid #1890ff; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+        
+        .session-bar { background: white; padding: 15px 30px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }
+        .session-info { display: flex; align-items: center; gap: 15px; }
+        .session-avatar { width: 50px; height: 50px; border-radius: 50%; background: #667eea; color: white; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; }
+        .session-details { }
+        .session-name { font-weight: 600; font-size: 18px; }
+        .session-username { color: #666; font-size: 14px; }
+        .session-actions { display: flex; gap: 10px; }
+        
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; }
+        .modal.active { display: flex; align-items: center; justify-content: center; }
+        .modal-content { background: white; padding: 30px; border-radius: 10px; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; }
+        .modal-header { font-size: 24px; font-weight: 600; margin-bottom: 20px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 500; }
+        .form-group input { width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; }
+        .form-group input:focus { outline: none; border-color: #667eea; }
+        .session-list-item { background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .session-list-item.active { background: #e6f7ff; border: 2px solid #667eea; }
     </style>
 </head>
 <body>
@@ -73,6 +92,80 @@
         <div class="header">
             <h1>📱 Telegram Media Server</h1>
             <p>Browse and manage your Telegram media safely - one chat at a time</p>
+        </div>
+        
+        <!-- Session Management Bar -->
+        <div class="session-bar" id="session-bar">
+            <div class="session-info">
+                <div class="session-avatar" id="session-avatar">?</div>
+                <div class="session-details">
+                    <div class="session-name" id="session-name">Loading...</div>
+                    <div class="session-username" id="session-username"></div>
+                </div>
+            </div>
+            <div class="session-actions">
+                <button class="button" onclick="openSessionModal()">🔄 Switch Account</button>
+                <button class="button button-secondary" onclick="openNewSessionModal()">➕ Add Account</button>
+            </div>
+        </div>
+        
+        <!-- Session Management Modal -->
+        <div class="modal" id="session-modal">
+            <div class="modal-content">
+                <div class="modal-header">Manage Sessions</div>
+                <div id="session-list"></div>
+                <div style="margin-top: 20px; display: flex; gap: 10px;">
+                    <button class="button" onclick="closeSessionModal()">Close</button>
+                    <button class="button button-secondary" onclick="openUploadModal()">📤 Upload Session File</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- New Session Modal -->
+        <div class="modal" id="new-session-modal">
+            <div class="modal-content">
+                <div class="modal-header">Create New Session</div>
+                <div class="form-group">
+                    <label>Session Name</label>
+                    <input type="text" id="new-session-name" placeholder="e.g., my_account">
+                </div>
+                <div class="form-group">
+                    <label>Phone Number (with country code)</label>
+                    <input type="text" id="new-session-phone" placeholder="e.g., +1234567890">
+                </div>
+                <div id="code-section" style="display: none;">
+                    <div class="form-group">
+                        <label>Verification Code</label>
+                        <input type="text" id="new-session-code" placeholder="Enter code from Telegram">
+                    </div>
+                    <div class="form-group">
+                        <label>2FA Password (if enabled)</label>
+                        <input type="password" id="new-session-password" placeholder="Leave empty if not enabled">
+                    </div>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button class="button" onclick="closeNewSessionModal()">Cancel</button>
+                    <button class="button button-secondary" id="create-session-btn" onclick="createSession()">Send Code</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Upload Session Modal -->
+        <div class="modal" id="upload-modal">
+            <div class="modal-content">
+                <div class="modal-header">Upload Session File</div>
+                <div class="info-box">
+                    Upload a .session file from another device. Make sure it's a valid Telegram session file.
+                </div>
+                <div class="form-group">
+                    <label>Select .session file</label>
+                    <input type="file" id="session-file" accept=".session">
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button class="button" onclick="closeUploadModal()">Cancel</button>
+                    <button class="button button-secondary" onclick="uploadSession()">Upload</button>
+                </div>
+            </div>
         </div>
         
         <!-- Step 1: Load Chats -->
@@ -509,6 +602,256 @@
             div.textContent = text;
             return div.innerHTML;
         }
+        
+        // Session Management Functions
+        let currentSessionData = null;
+        let pendingSessionName = null;
+        let pendingSessionPhone = null;
+        
+        async function loadCurrentSession() {
+            try {
+                const response = await fetch('/api/sessions');
+                const data = await response.json();
+                currentSessionData = data;
+                
+                if (data.current_user) {
+                    const user = data.current_user;
+                    const initials = (user.first_name || '?').charAt(0).toUpperCase();
+                    document.getElementById('session-avatar').textContent = initials;
+                    document.getElementById('session-name').textContent = user.first_name + (user.last_name ? ' ' + user.last_name : '');
+                    document.getElementById('session-username').textContent = user.username ? '@' + user.username : user.phone;
+                } else {
+                    document.getElementById('session-avatar').textContent = '?';
+                    document.getElementById('session-name').textContent = 'No session';
+                    document.getElementById('session-username').textContent = 'Please add an account';
+                }
+            } catch (error) {
+                console.error('Failed to load session:', error);
+            }
+        }
+        
+        function openSessionModal() {
+            loadSessionList();
+            document.getElementById('session-modal').classList.add('active');
+        }
+        
+        function closeSessionModal() {
+            document.getElementById('session-modal').classList.remove('active');
+        }
+        
+        async function loadSessionList() {
+            try {
+                const response = await fetch('/api/sessions');
+                const data = await response.json();
+                
+                let html = '';
+                if (data.sessions.length === 0) {
+                    html = '<p style="text-align: center; color: #999; padding: 20px;">No sessions found. Create a new one!</p>';
+                } else {
+                    data.sessions.forEach(session => {
+                        const isActive = data.current_user && session === data.current_user.session + '.session';
+                        html += `
+                            <div class="session-list-item ${isActive ? 'active' : ''}">
+                                <div>
+                                    <strong>${session}</strong>
+                                    ${isActive ? '<span style="color: #667eea; margin-left: 10px;">● Active</span>' : ''}
+                                </div>
+                                <div style="display: flex; gap: 10px;">
+                                    ${!isActive ? `<button class="button" style="padding: 8px 16px; font-size: 14px;" onclick="switchSession('${session}')">Switch</button>` : ''}
+                                    <button class="button" style="padding: 8px 16px; font-size: 14px; background: #f56565;" onclick="deleteSession('${session}')">Delete</button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+                document.getElementById('session-list').innerHTML = html;
+            } catch (error) {
+                document.getElementById('session-list').innerHTML = '<p style="color: red;">Error loading sessions</p>';
+            }
+        }
+        
+        async function switchSession(sessionName) {
+            try {
+                const response = await fetch('/api/sessions/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_name: sessionName })
+                });
+                
+                if (response.ok) {
+                    alert('✅ Switched to ' + sessionName);
+                    closeSessionModal();
+                    await loadCurrentSession();
+                    // Reload chats for new account
+                    allChats = [];
+                    selectedChat = null;
+                    document.getElementById('chat-list').innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">Click "Load Chats" to get started</p>';
+                    document.getElementById('action-panel').classList.add('hidden');
+                    document.getElementById('results-panel').classList.add('hidden');
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (error) {
+                alert('Error switching session: ' + error.message);
+            }
+        }
+        
+        async function deleteSession(sessionName) {
+            if (!confirm('Delete session ' + sessionName + '? This cannot be undone.')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/sessions/' + sessionName, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    alert('✅ Session deleted');
+                    loadSessionList();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (error) {
+                alert('Error deleting session: ' + error.message);
+            }
+        }
+        
+        function openNewSessionModal() {
+            document.getElementById('new-session-name').value = '';
+            document.getElementById('new-session-phone').value = '';
+            document.getElementById('new-session-code').value = '';
+            document.getElementById('new-session-password').value = '';
+            document.getElementById('code-section').style.display = 'none';
+            document.getElementById('create-session-btn').textContent = 'Send Code';
+            document.getElementById('create-session-btn').onclick = createSession;
+            document.getElementById('new-session-modal').classList.add('active');
+        }
+        
+        function closeNewSessionModal() {
+            document.getElementById('new-session-modal').classList.remove('active');
+        }
+        
+        async function createSession() {
+            const sessionName = document.getElementById('new-session-name').value.trim();
+            const phone = document.getElementById('new-session-phone').value.trim();
+            
+            if (!sessionName || !phone) {
+                alert('Please enter session name and phone number');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/sessions/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_name: sessionName + '.session',
+                        phone: phone
+                    })
+                });
+                
+                if (response.ok) {
+                    pendingSessionName = sessionName + '.session';
+                    pendingSessionPhone = phone;
+                    
+                    alert('✅ Code sent to ' + phone + '\nCheck your Telegram app!');
+                    document.getElementById('code-section').style.display = 'block';
+                    document.getElementById('create-session-btn').textContent = 'Verify Code';
+                    document.getElementById('create-session-btn').onclick = verifySession;
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (error) {
+                alert('Error creating session: ' + error.message);
+            }
+        }
+        
+        async function verifySession() {
+            const code = document.getElementById('new-session-code').value.trim();
+            const password = document.getElementById('new-session-password').value.trim();
+            
+            if (!code) {
+                alert('Please enter the verification code');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/sessions/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_name: pendingSessionName,
+                        phone: pendingSessionPhone,
+                        code: code,
+                        password: password || null
+                    })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    alert('✅ Session created successfully!\nLogged in as: ' + data.user.first_name);
+                    closeNewSessionModal();
+                    await switchSession(pendingSessionName);
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (error) {
+                alert('Error verifying code: ' + error.message);
+            }
+        }
+        
+        function openUploadModal() {
+            closeSessionModal();
+            document.getElementById('upload-modal').classList.add('active');
+        }
+        
+        function closeUploadModal() {
+            document.getElementById('upload-modal').classList.remove('active');
+        }
+        
+        async function uploadSession() {
+            const fileInput = document.getElementById('session-file');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Please select a file');
+                return;
+            }
+            
+            if (!file.name.endsWith('.session')) {
+                alert('File must have .session extension');
+                return;
+            }
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const response = await fetch('/api/sessions/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    alert('✅ Session file uploaded successfully!');
+                    closeUploadModal();
+                    openSessionModal();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (error) {
+                alert('Error uploading session: ' + error.message);
+            }
+        }
+        
+        // Load current session on page load
+        loadCurrentSession();
     </script>
 </body>
 </html>

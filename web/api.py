@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,11 +10,14 @@ from app.scanner import MediaScanner
 from app.downloader import MediaDownloader
 from app.search_engine import SearchEngine
 from app.streamer import MediaStreamer
+from app.config import settings
 from typing import Optional, List
 from datetime import datetime
+from pydantic import BaseModel
 import logging
 import os
 import asyncio
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,21 @@ app = FastAPI(title="Telegram Media Server", version="1.0.0")
 
 # Background task references
 background_tasks = []
+
+
+# Pydantic models for requests
+class SessionCreateRequest(BaseModel):
+    session_name: str
+    phone: str
+
+class SessionVerifyRequest(BaseModel):
+    session_name: str
+    phone: str
+    code: str
+    password: Optional[str] = None
+
+class SessionSwitchRequest(BaseModel):
+    session_name: str
 
 
 # Startup event
@@ -90,6 +108,97 @@ async def get_chats(
         }
         for chat in chats
     ]
+
+
+# Session Management Endpoints
+
+@app.get("/api/sessions")
+async def list_sessions():
+    """List all available session files"""
+    sessions = telegram_client.list_sessions()
+    current_user = await telegram_client.get_current_user()
+    return {
+        'sessions': sessions,
+        'current_user': current_user
+    }
+
+
+@app.post("/api/sessions/create")
+async def create_session(request: SessionCreateRequest):
+    """Start session creation process"""
+    try:
+        result = await telegram_client.create_session(request.session_name, request.phone)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/sessions/verify")
+async def verify_session(request: SessionVerifyRequest):
+    """Verify code and complete session creation"""
+    try:
+        result = await telegram_client.verify_code(
+            request.session_name,
+            request.phone,
+            request.code,
+            request.password
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/sessions/switch")
+async def switch_session(request: SessionSwitchRequest):
+    """Switch to a different session"""
+    try:
+        user = await telegram_client.connect(request.session_name)
+        return {
+            'status': 'success',
+            'user': {
+                'id': user.id,
+                'first_name': user.first_name,
+                'username': user.username,
+                'phone': user.phone
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/sessions/upload")
+async def upload_session(file: UploadFile = File(...)):
+    """Upload a session file"""
+    try:
+        if not file.filename.endswith('.session'):
+            raise HTTPException(status_code=400, detail="File must be a .session file")
+        
+        file_path = os.path.join(settings.SESSION_DIR, file.filename)
+        
+        with open(file_path, 'wb') as f:
+            shutil.copyfileobj(file.file, f)
+        
+        return {
+            'status': 'success',
+            'filename': file.filename,
+            'message': 'Session file uploaded successfully'
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/sessions/{session_name}")
+async def delete_session(session_name: str):
+    """Delete a session file"""
+    try:
+        file_path = os.path.join(settings.SESSION_DIR, session_name)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return {'status': 'success', 'message': f'Session {session_name} deleted'}
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/media")
