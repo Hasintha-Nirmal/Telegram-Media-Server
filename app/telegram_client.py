@@ -77,6 +77,48 @@ class TelegramMediaClient:
         
         return media_messages
     
+    async def get_messages(self, chat_id, limit=None, offset_id=0):
+        """Get all messages (text and media) from a chat"""
+        messages = []
+        
+        async for message in self.client.iter_messages(
+            chat_id,
+            limit=limit,
+            offset_id=offset_id,
+            reverse=False
+        ):
+            message_data = {
+                'message_id': message.id,
+                'chat_id': message.chat_id,
+                'text': message.text or '',
+                'sender_id': message.sender_id,
+                'sender_name': None,
+                'date': message.date,
+                'reply_to_message_id': message.reply_to_msg_id if hasattr(message, 'reply_to_msg_id') else None,
+                'forward_from': None,
+                'has_media': bool(message.media)
+            }
+            
+            # Get sender name
+            if message.sender:
+                if hasattr(message.sender, 'first_name'):
+                    message_data['sender_name'] = message.sender.first_name
+                    if hasattr(message.sender, 'last_name') and message.sender.last_name:
+                        message_data['sender_name'] += f" {message.sender.last_name}"
+                elif hasattr(message.sender, 'title'):
+                    message_data['sender_name'] = message.sender.title
+            
+            # Get forward info
+            if message.forward:
+                if hasattr(message.forward, 'from_name'):
+                    message_data['forward_from'] = message.forward.from_name
+                elif hasattr(message.forward, 'from_id'):
+                    message_data['forward_from'] = str(message.forward.from_id)
+            
+            messages.append(message_data)
+        
+        return messages
+    
     async def _extract_media_info(self, message):
         """Extract media information from message"""
         if not message.media:

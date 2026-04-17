@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database import get_session, init_db
-from database.models import Chat, Media, DownloadQueue
+from database.models import Chat, Media, DownloadQueue, Message
 from app.telegram_client import telegram_client
 from app.scanner import MediaScanner
 from app.downloader import MediaDownloader
@@ -89,6 +89,7 @@ async def root():
             <button class="button" onclick="scanMedia()">📥 Scan All Media</button>
             <button class="button" onclick="viewChats()">💬 View Chats</button>
             <button class="button" onclick="viewMedia()">🎬 View Media</button>
+            <button class="button" onclick="viewMessages()">💭 View Messages</button>
         </div>
         
         <div class="section">
@@ -143,7 +144,11 @@ async def root():
                         <td style="padding: 10px;">${chat.name}</td>
                         <td>${chat.chat_type}</td>
                         <td>${chat.username || '-'}</td>
-                        <td><button class="button" onclick="viewChatMedia(${chat.id})">View Media</button></td>
+                        <td>
+                            <button class="button" onclick="viewChatMedia(${chat.id})">View Media</button>
+                            <button class="button" onclick="viewChatMessages(${chat.id})">View Messages</button>
+                            <button class="button" onclick="scanChatMessages(${chat.id})">Scan Messages</button>
+                        </td>
                     </tr>`;
                 });
                 html += '</table>';
@@ -160,6 +165,49 @@ async def root():
                 const response = await fetch(`/api/media?chat_id=${chatId}&limit=50`);
                 const media = await response.json();
                 displayMedia(media);
+            }
+            
+            async function viewMessages() {
+                const response = await fetch('/api/messages?limit=50');
+                const messages = await response.json();
+                displayMessages(messages);
+            }
+            
+            async function viewChatMessages(chatId) {
+                const response = await fetch(`/api/chat/${chatId}/messages?limit=100`);
+                const messages = await response.json();
+                displayMessages(messages);
+            }
+            
+            async function scanChatMessages(chatId) {
+                document.getElementById('results-content').innerHTML = 'Scanning messages...';
+                const response = await fetch(`/api/scan/chat/${chatId}/messages`, { method: 'POST' });
+                const data = await response.json();
+                document.getElementById('results-content').innerHTML = `✅ Scanned ${data.count} messages`;
+                loadStats();
+            }
+            
+            function displayMessages(messages) {
+                if (messages.length === 0) {
+                    document.getElementById('results-content').innerHTML = 'No messages found';
+                    return;
+                }
+                let html = '<div style="max-width: 800px;">';
+                messages.forEach(msg => {
+                    const date = new Date(msg.date).toLocaleString();
+                    const mediaIcon = msg.has_media ? '📎' : '';
+                    html += `<div style="border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 8px; background: #f9f9f9;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                            <strong>${msg.sender_name || 'Unknown'}</strong>
+                            <span style="color: #666; font-size: 12px;">${date} ${mediaIcon}</span>
+                        </div>
+                        <div style="white-space: pre-wrap;">${msg.text || '(No text)'}</div>
+                        ${msg.reply_to_message_id ? `<div style="margin-top: 5px; color: #666; font-size: 12px;">↩️ Reply to message ${msg.reply_to_message_id}</div>` : ''}
+                        ${msg.forward_from ? `<div style="margin-top: 5px; color: #666; font-size: 12px;">↪️ Forwarded from ${msg.forward_from}</div>` : ''}
+                    </div>`;
+                });
+                html += '</div>';
+                document.getElementById('results-content').innerHTML = html;
             }
             
             async function searchMedia() {
@@ -378,6 +426,89 @@ async def scan_chat_media(chat_id: int, db: AsyncSession = Depends(get_session))
     scanner = MediaScanner(db)
     count = await scanner.scan_chat_media(chat_id)
     return {'count': count}
+
+
+@app.post("/api/scan/chat/{chat_id}/messages")
+async def scan_chat_messages(
+    chat_id: int,
+    limit: Optional[int] = Query(1000, description="Max messages to scan (default: 1000)"),
+    db: AsyncSession = Depends(get_session)
+):
+    """Scan text messages from specific chat"""
+    scanner = MediaScanner(db)
+    count = await scanner.scan_chat_messages(chat_id, limit=limit)
+    return {'count': count}
+
+
+@app.get("/api/messages")
+async def get_messages(
+    chat_id: Optional[int] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_session)
+):
+    """Get messages with filters"""
+    query = select(Message).join(Chat)
+    
+    if chat_id:
+        query = query.where(Message.chat_id == chat_id)
+    
+    if search:
+        query = query.where(Message.text.ilike(f'%{search}%'))
+    
+    query = query.order_by(Message.date.desc()).limit(limit).offset(offset)
+    
+    result = await db.execute(query)
+    messages = result.scalars().all()
+    
+    return [
+        {
+            'id': msg.id,
+            'message_id': msg.message_id,
+            'chat_id': msg.chat_id,
+            'text': msg.text,
+            'sender_id': msg.sender_id,
+            'sender_name': msg.sender_name,
+            'date': msg.date.isoformat() if msg.date else None,
+            'reply_to_message_id': msg.reply_to_message_id,
+            'forward_from': msg.forward_from,
+            'has_media': msg.has_media
+        }
+        for msg in messages
+    ]
+
+
+@app.get("/api/chat/{chat_id}/messages")
+async def get_chat_messages(
+    chat_id: int,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_session)
+):
+    """Get messages from a specific chat"""
+    result = await db.execute(
+        select(Message)
+        .where(Message.chat_id == chat_id)
+        .order_by(Message.date.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    messages = result.scalars().all()
+    
+    return [
+        {
+            'id': msg.id,
+            'message_id': msg.message_id,
+            'text': msg.text,
+            'sender_name': msg.sender_name,
+            'date': msg.date.isoformat() if msg.date else None,
+            'has_media': msg.has_media,
+            'reply_to_message_id': msg.reply_to_message_id,
+            'forward_from': msg.forward_from
+        }
+        for msg in messages
+    ]
 
 
 @app.post("/api/download/{media_id}")

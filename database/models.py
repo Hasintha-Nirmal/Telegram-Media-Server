@@ -73,6 +73,28 @@ class DownloadQueue(Base):
     )
 
 
+class Message(Base):
+    __tablename__ = "messages"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    message_id = Column(BigInteger, nullable=False)
+    chat_id = Column(BigInteger, ForeignKey("chats.id"), nullable=False)
+    text = Column(String, nullable=True)
+    sender_id = Column(BigInteger, nullable=True)
+    sender_name = Column(String, nullable=True)
+    date = Column(DateTime, nullable=False)
+    reply_to_message_id = Column(BigInteger, nullable=True)
+    forward_from = Column(String, nullable=True)
+    has_media = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_message_chat_id', 'chat_id'),
+        Index('idx_message_date', 'date'),
+        Index('idx_message_text', 'text'),
+    )
+
+
 class SyncState(Base):
     __tablename__ = "sync_state"
     

@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from .models import Base, Chat, Media, DownloadQueue, SyncState
+from .models import Base, Chat, Media, DownloadQueue, SyncState, Message
 import os
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:////data/database/media.db")
