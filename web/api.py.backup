@@ -1,0 +1,965 @@
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from database import get_session, init_db
+from database.models import Chat, Media, DownloadQueue, Message
+from app.telegram_client import telegram_client
+from app.scanner import MediaScanner
+from app.downloader import MediaDownloader
+from app.search_engine import SearchEngine
+from app.streamer import MediaStreamer
+from typing import Optional, List
+from datetime import datetime
+import logging
+import os
+
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Telegram Media Server", version="1.0.0")
+
+
+# Startup event
+@app.on_event("startup")
+async def startup_event():
+    """Initialize application"""
+    logger.info("Starting Telegram Media Server...")
+    
+    # Initialize database
+    await init_db()
+    
+    # Connect to Telegram
+    await telegram_client.connect()
+    
+    logger.info("Application started successfully")
+
+
+# Shutdown event
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    await telegram_client.disconnect()
+
+
+# Root endpoint
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Serve web interface"""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Telegram Media Server</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; }
+            .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
+            .header h1 { font-size: 32px; margin-bottom: 10px; }
+            .header p { opacity: 0.9; }
+            
+            .step-container { background: white; padding: 30px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .step-header { display: flex; align-items: center; margin-bottom: 20px; }
+            .step-number { background: #667eea; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 15px; }
+            .step-title { font-size: 24px; font-weight: 600; }
+            
+            .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
+            .search-box input { flex: 1; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; }
+            .search-box input:focus { outline: none; border-color: #667eea; }
+            
+            .button { background: #667eea; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: 500; transition: all 0.3s; }
+            .button:hover { background: #5568d3; transform: translateY(-2px); }
+            .button:disabled { background: #ccc; cursor: not-allowed; transform: none; }
+            .button-secondary { background: #48bb78; }
+            .button-secondary:hover { background: #38a169; }
+            .button-danger { background: #f56565; }
+            .button-danger:hover { background: #e53e3e; }
+            
+            .chat-list { display: grid; gap: 15px; }
+            .chat-item { background: #f9f9f9; padding: 20px; border-radius: 8px; border: 2px solid transparent; cursor: pointer; transition: all 0.3s; }
+            .chat-item:hover { border-color: #667eea; background: white; }
+            .chat-item.selected { border-color: #667eea; background: #f0f4ff; }
+            .chat-name { font-size: 18px; font-weight: 600; margin-bottom: 5px; }
+            .chat-meta { color: #666; font-size: 14px; }
+            .chat-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px; }
+            .badge-channel { background: #ffd700; color: #000; }
+            .badge-group { background: #48bb78; color: white; }
+            .badge-private { background: #667eea; color: white; }
+            
+            .action-panel { background: #f0f4ff; padding: 20px; border-radius: 8px; margin-top: 20px; }
+            .action-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+            
+            .results-container { margin-top: 20px; }
+            .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+            .media-card { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+            .media-icon { font-size: 48px; padding: 30px; text-align: center; background: #f9f9f9; }
+            .media-info { padding: 15px; }
+            .media-title { font-weight: 600; margin-bottom: 8px; }
+            .media-meta { color: #666; font-size: 14px; margin-bottom: 10px; }
+            
+            .message-list { display: flex; flex-direction: column; gap: 15px; }
+            .message-card { background: white; padding: 20px; border-radius: 8px; border-left: 4px solid #667eea; }
+            .message-header { display: flex; justify-content: space-between; margin-bottom: 10px; }
+            .message-sender { font-weight: 600; color: #667eea; }
+            .message-date { color: #999; font-size: 14px; }
+            .message-text { white-space: pre-wrap; line-height: 1.6; }
+            
+            .loading { text-align: center; padding: 40px; color: #667eea; }
+            .loading::after { content: '...'; animation: dots 1.5s steps(4, end) infinite; }
+            @keyframes dots { 0%, 20% { content: '.'; } 40% { content: '..'; } 60%, 100% { content: '...'; } }
+            
+            .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+            .stat-card { background: white; padding: 20px; border-radius: 8px; text-align: center; }
+            .stat-value { font-size: 32px; font-weight: bold; color: #667eea; }
+            .stat-label { color: #666; margin-top: 5px; }
+            
+            .hidden { display: none; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>📱 Telegram Media Server</h1>
+                <p>Browse and manage your Telegram media safely</p>
+            </div>
+            
+            <!-- Step 1: Load Chats -->
+            <div class="step-container">
+                <div class="step-header">
+                    <div class="step-number">1</div>
+                    <div class="step-title">Load Your Chats</div>
+                </div>
+                <p style="margin-bottom: 15px; color: #666;">First, load the list of your Telegram chats. This only fetches chat names, not messages.</p>
+                <button class="button" onclick="loadChats()">🔍 Load Chats</button>
+                <div id="chat-stats" class="stats hidden" style="margin-top: 20px;"></div>
+            </div>
+            
+            <!-- Step 2: Select a Chat -->
+            <div class="step-container">
+                <div class="step-header">
+                    <div class="step-number">2</div>
+                    <div class="step-title">Select a Chat</div>
+                </div>
+                <div class="search-box">
+                    <input type="text" id="chat-search" placeholder="Search chats by name..." oninput="filterChats()">
+                    <select id="type-filter" onchange="filterChats()" style="padding: 12px; border: 2px solid #ddd; border-radius: 6px;">
+                        <option value="">All Types</option>
+                        <option value="channel">Channels</option>
+                        <option value="supergroup">Supergroups</option>
+                        <option value="group">Groups</option>
+                        <option value="private">Private</option>
+                        <option value="bot">Bots</option>
+                    </select>
+                </div>
+                <div id="chat-list" class="chat-list"></div>
+            </div>
+            
+            <!-- Step 3: Choose Action -->
+            <div class="step-container" id="action-panel" class="hidden">
+                <div class="step-header">
+                    <div class="step-number">3</div>
+                    <div class="step-title">What do you want to see?</div>
+                </div>
+                <div id="selected-chat-info" style="background: #f0f4ff; padding: 15px; border-radius: 8px; margin-bottom: 20px;"></div>
+                <div class="action-buttons">
+                    <button class="button button-secondary" onclick="scanAndViewMedia()">🎬 Scan & View Media</button>
+                    <button class="button button-secondary" onclick="scanAndViewMessages()">💭 Scan & View Messages</button>
+                    <button class="button" onclick="viewExistingMedia()">📂 View Existing Media</button>
+                    <button class="button" onclick="viewExistingMessages()">💬 View Existing Messages</button>
+                </div>
+                <p style="margin-top: 15px; color: #666; font-size: 14px;">
+                    <strong>Scan:</strong> Fetches new data from Telegram (may take time)<br>
+                    <strong>View Existing:</strong> Shows already scanned data (instant)
+                </p>
+            </div>
+            
+            <!-- Results -->
+            <div class="step-container hidden" id="results-panel">
+                <div class="step-header">
+                    <div class="step-number">4</div>
+                    <div class="step-title">Results</div>
+                </div>
+                <div id="results-content"></div>
+            </div>
+        </div>
+        
+        <script>
+            let allChats = [];
+            let selectedChat = null;
+            
+            async function loadChats() {
+                document.getElementById('chat-list').innerHTML = '<div class="loading">Loading chats</div>';
+                
+                try {
+                    const response = await fetch('/api/scan/chats', { method: 'POST' });
+                    const data = await response.json();
+                    
+                    const chatsResponse = await fetch('/api/chats?limit=1000');
+                    allChats = await chatsResponse.json();
+                    
+                    document.getElementById('chat-stats').innerHTML = `
+                        <div class="stat-card">
+                            <div class="stat-value">${allChats.length}</div>
+                            <div class="stat-label">Total Chats</div>
+                        </div>
+                    `;
+                    document.getElementById('chat-stats').classList.remove('hidden');
+                    
+                    displayChats(allChats);
+                } catch (error) {
+                    document.getElementById('chat-list').innerHTML = '<p style="color: red;">Error loading chats: ' + error.message + '</p>';
+                }
+            }
+            
+            function displayChats(chats) {
+                if (chats.length === 0) {
+                    document.getElementById('chat-list').innerHTML = '<p>No chats found</p>';
+                    return;
+                }
+                
+                let html = '';
+                chats.forEach(chat => {
+                    const badgeClass = 'badge-' + (chat.chat_type === 'supergroup' ? 'group' : chat.chat_type);
+                    html += `
+                        <div class="chat-item" onclick="selectChat(${chat.id})">
+                            <div class="chat-name">${chat.name}</div>
+                            <div class="chat-meta">
+                                <span class="chat-badge ${badgeClass}">${chat.chat_type}</span>
+                                ${chat.username ? '@' + chat.username : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                document.getElementById('chat-list').innerHTML = html;
+            }
+            
+            function filterChats() {
+                const searchTerm = document.getElementById('chat-search').value.toLowerCase();
+                const typeFilter = document.getElementById('type-filter').value;
+                
+                const filtered = allChats.filter(chat => {
+                    const matchesSearch = chat.name.toLowerCase().includes(searchTerm) || 
+                                        (chat.username && chat.username.toLowerCase().includes(searchTerm));
+                    const matchesType = !typeFilter || chat.chat_type === typeFilter;
+                    return matchesSearch && matchesType;
+                });
+                
+                displayChats(filtered);
+            }
+            
+            function selectChat(chatId) {
+                selectedChat = allChats.find(c => c.id === chatId);
+                
+                // Update UI
+                document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('selected'));
+                event.target.closest('.chat-item').classList.add('selected');
+                
+                // Show action panel
+                document.getElementById('action-panel').classList.remove('hidden');
+                document.getElementById('selected-chat-info').innerHTML = `
+                    <strong>Selected:</strong> ${selectedChat.name} 
+                    <span class="chat-badge badge-${selectedChat.chat_type === 'supergroup' ? 'group' : selectedChat.chat_type}">${selectedChat.chat_type}</span>
+                `;
+                
+                // Scroll to action panel
+                document.getElementById('action-panel').scrollIntoView({ behavior: 'smooth' });
+            }
+            
+            async function scanAndViewMedia() {
+                if (!selectedChat) return;
+                
+                showResults('<div class="loading">Scanning media from ' + selectedChat.name + '</div>');
+                
+                try {
+                    const response = await fetch(`/api/scan/chat/${selectedChat.id}`, { method: 'POST' });
+                    const data = await response.json();
+                    
+                    if (data.count === 0) {
+                        showResults('<p>No media found in this chat</p>');
+                        return;
+                    }
+                    
+                    await viewExistingMedia();
+                } catch (error) {
+                    showResults('<p style="color: red;">Error: ' + error.message + '</p>');
+                }
+            }
+            
+            async function scanAndViewMessages() {
+                if (!selectedChat) return;
+                
+                showResults('<div class="loading">Scanning messages from ' + selectedChat.name + '</div>');
+                
+                try {
+                    const response = await fetch(`/api/scan/chat/${selectedChat.id}/messages?limit=1000`, { method: 'POST' });
+                    const data = await response.json();
+                    
+                    if (data.count === 0) {
+                        showResults('<p>No messages found in this chat</p>');
+                        return;
+                    }
+                    
+                    await viewExistingMessages();
+                } catch (error) {
+                    showResults('<p style="color: red;">Error: ' + error.message + '</p>');
+                }
+            }
+            
+            async function viewExistingMedia() {
+                if (!selectedChat) return;
+                
+                showResults('<div class="loading">Loading media</div>');
+                
+                try {
+                    const response = await fetch(`/api/media?chat_id=${selectedChat.id}&limit=100`);
+                    const media = await response.json();
+                    
+                    if (media.length === 0) {
+                        showResults('<p>No media found. Click "Scan & View Media" to fetch from Telegram.</p>');
+                        return;
+                    }
+                    
+                    displayMedia(media);
+                } catch (error) {
+                    showResults('<p style="color: red;">Error: ' + error.message + '</p>');
+                }
+            }
+            
+            async function viewExistingMessages() {
+                if (!selectedChat) return;
+                
+                showResults('<div class="loading">Loading messages</div>');
+                
+                try {
+                    const response = await fetch(`/api/chat/${selectedChat.id}/messages?limit=100`);
+                    const messages = await response.json();
+                    
+                    if (messages.length === 0) {
+                        showResults('<p>No messages found. Click "Scan & View Messages" to fetch from Telegram.</p>');
+                        return;
+                    }
+                    
+                    displayMessages(messages);
+                } catch (error) {
+                    showResults('<p style="color: red;">Error: ' + error.message + '</p>');
+                }
+            }
+            
+            function displayMedia(media) {
+                const icons = {video: '🎬', photo: '🖼️', audio: '🎵', document: '📄', voice: '🎤', gif: '🎞️'};
+                
+                let html = '<div class="media-grid">';
+                media.forEach(item => {
+                    const icon = icons[item.media_type] || '📎';
+                    const size = formatBytes(item.file_size);
+                    html += `
+                        <div class="media-card">
+                            <div class="media-icon">${icon}</div>
+                            <div class="media-info">
+                                <div class="media-title">${item.file_name || 'Unnamed'}</div>
+                                <div class="media-meta">
+                                    Type: ${item.media_type}<br>
+                                    Size: ${size}
+                                    ${item.duration ? '<br>Duration: ' + formatDuration(item.duration) : ''}
+                                </div>
+                                ${item.media_type === 'video' ? 
+                                    `<button class="button" style="width: 100%; margin-top: 10px;" onclick="streamVideo(${item.id})">▶️ Stream</button>` : 
+                                    ''}
+                                <button class="button button-secondary" style="width: 100%; margin-top: 10px;" onclick="downloadMedia(${item.id})">⬇️ Download</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                showResults(html);
+            }
+            
+            function displayMessages(messages) {
+                let html = '<div class="message-list">';
+                messages.forEach(msg => {
+                    const date = new Date(msg.date).toLocaleString();
+                    html += `
+                        <div class="message-card">
+                            <div class="message-header">
+                                <span class="message-sender">${msg.sender_name || 'Unknown'}</span>
+                                <span class="message-date">${date}</span>
+                            </div>
+                            <div class="message-text">${msg.text || '(No text)'}</div>
+                            ${msg.has_media ? '<div style="margin-top: 10px; color: #667eea;">📎 Has media attachment</div>' : ''}
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                showResults(html);
+            }
+            
+            function showResults(html) {
+                document.getElementById('results-content').innerHTML = html;
+                document.getElementById('results-panel').classList.remove('hidden');
+                document.getElementById('results-panel').scrollIntoView({ behavior: 'smooth' });
+            }
+            
+            function streamVideo(mediaId) {
+                window.open(`/stream/${mediaId}`, '_blank');
+            }
+            
+            async function downloadMedia(mediaId) {
+                const response = await fetch(`/api/download/${mediaId}`, { method: 'POST' });
+                const data = await response.json();
+                alert('Download queued! Queue ID: ' + data.queue_id);
+            }
+            
+            function formatBytes(bytes) {
+                if (!bytes) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+            }
+            
+            function formatDuration(seconds) {
+                const mins = Math.floor(seconds / 60);
+                const secs = seconds % 60;
+                return `${mins}:${secs.toString().padStart(2, '0')}`;
+            }
+        </script>
+    </body>
+    </html>
+    """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Telegram Media Server</title>
+        <style>
+            body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+            h1 { color: #0088cc; }
+            .section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+            .button { background: #0088cc; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; margin: 5px; }
+            .button:hover { background: #006699; }
+            .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+            .stat-card { background: #f5f5f5; padding: 15px; border-radius: 8px; }
+            .stat-value { font-size: 24px; font-weight: bold; color: #0088cc; }
+        </style>
+    </head>
+    <body>
+        <h1>📱 Telegram Media Server</h1>
+        
+        <div class="section">
+            <h2>Dashboard</h2>
+            <div class="stats" id="stats">
+                <div class="stat-card">
+                    <div>Total Chats</div>
+                    <div class="stat-value" id="total-chats">-</div>
+                </div>
+                <div class="stat-card">
+                    <div>Total Media</div>
+                    <div class="stat-value" id="total-media">-</div>
+                </div>
+                <div class="stat-card">
+                    <div>Total Storage</div>
+                    <div class="stat-value" id="total-storage">-</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Actions</h2>
+            <button class="button" onclick="scanChats()">🔍 Scan Chats</button>
+            <button class="button" onclick="scanMedia()">📥 Scan All Media</button>
+            <button class="button" onclick="viewChats()">💬 View Chats</button>
+            <button class="button" onclick="viewMedia()">🎬 View Media</button>
+            <button class="button" onclick="viewMessages()">💭 View Messages</button>
+        </div>
+        
+        <div class="section">
+            <h2>Search Media</h2>
+            <input type="text" id="search-query" placeholder="Search by filename or chat..." style="width: 300px; padding: 8px;">
+            <select id="media-type" style="padding: 8px;">
+                <option value="">All Types</option>
+                <option value="video">Videos</option>
+                <option value="photo">Photos</option>
+                <option value="audio">Audio</option>
+                <option value="document">Documents</option>
+            </select>
+            <button class="button" onclick="searchMedia()">Search</button>
+        </div>
+        
+        <div class="section" id="results">
+            <h2>Results</h2>
+            <div id="results-content">Select an action to view results</div>
+        </div>
+        
+        <script>
+            async function loadStats() {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                document.getElementById('total-chats').textContent = data.total_chats;
+                document.getElementById('total-media').textContent = data.total_media;
+                document.getElementById('total-storage').textContent = formatBytes(data.total_storage);
+            }
+            
+            async function scanChats() {
+                document.getElementById('results-content').innerHTML = 'Scanning chats...';
+                const response = await fetch('/api/scan/chats', { method: 'POST' });
+                const data = await response.json();
+                document.getElementById('results-content').innerHTML = `✅ Scanned ${data.count} chats`;
+                loadStats();
+            }
+            
+            async function scanMedia() {
+                document.getElementById('results-content').innerHTML = 'Scanning media (this may take a while)...';
+                const response = await fetch('/api/scan/media', { method: 'POST' });
+                const data = await response.json();
+                document.getElementById('results-content').innerHTML = `✅ Indexed ${data.count} media items`;
+                loadStats();
+            }
+            
+            async function viewChats() {
+                const response = await fetch('/api/chats');
+                const chats = await response.json();
+                let html = '<table style="width:100%; border-collapse: collapse;"><tr><th>Name</th><th>Type</th><th>Username</th><th>Actions</th></tr>';
+                chats.forEach(chat => {
+                    html += `<tr style="border-bottom: 1px solid #ddd;">
+                        <td style="padding: 10px;">${chat.name}</td>
+                        <td>${chat.chat_type}</td>
+                        <td>${chat.username || '-'}</td>
+                        <td>
+                            <button class="button" onclick="viewChatMedia(${chat.id})">View Media</button>
+                            <button class="button" onclick="viewChatMessages(${chat.id})">View Messages</button>
+                            <button class="button" onclick="scanChatMessages(${chat.id})">Scan Messages</button>
+                        </td>
+                    </tr>`;
+                });
+                html += '</table>';
+                document.getElementById('results-content').innerHTML = html;
+            }
+            
+            async function viewMedia() {
+                const response = await fetch('/api/media?limit=50');
+                const media = await response.json();
+                displayMedia(media);
+            }
+            
+            async function viewChatMedia(chatId) {
+                const response = await fetch(`/api/media?chat_id=${chatId}&limit=50`);
+                const media = await response.json();
+                displayMedia(media);
+            }
+            
+            async function viewMessages() {
+                const response = await fetch('/api/messages?limit=50');
+                const messages = await response.json();
+                displayMessages(messages);
+            }
+            
+            async function viewChatMessages(chatId) {
+                const response = await fetch(`/api/chat/${chatId}/messages?limit=100`);
+                const messages = await response.json();
+                displayMessages(messages);
+            }
+            
+            async function scanChatMessages(chatId) {
+                document.getElementById('results-content').innerHTML = 'Scanning messages...';
+                const response = await fetch(`/api/scan/chat/${chatId}/messages`, { method: 'POST' });
+                const data = await response.json();
+                document.getElementById('results-content').innerHTML = `✅ Scanned ${data.count} messages`;
+                loadStats();
+            }
+            
+            function displayMessages(messages) {
+                if (messages.length === 0) {
+                    document.getElementById('results-content').innerHTML = 'No messages found';
+                    return;
+                }
+                let html = '<div style="max-width: 800px;">';
+                messages.forEach(msg => {
+                    const date = new Date(msg.date).toLocaleString();
+                    const mediaIcon = msg.has_media ? '📎' : '';
+                    html += `<div style="border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 8px; background: #f9f9f9;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                            <strong>${msg.sender_name || 'Unknown'}</strong>
+                            <span style="color: #666; font-size: 12px;">${date} ${mediaIcon}</span>
+                        </div>
+                        <div style="white-space: pre-wrap;">${msg.text || '(No text)'}</div>
+                        ${msg.reply_to_message_id ? `<div style="margin-top: 5px; color: #666; font-size: 12px;">↩️ Reply to message ${msg.reply_to_message_id}</div>` : ''}
+                        ${msg.forward_from ? `<div style="margin-top: 5px; color: #666; font-size: 12px;">↪️ Forwarded from ${msg.forward_from}</div>` : ''}
+                    </div>`;
+                });
+                html += '</div>';
+                document.getElementById('results-content').innerHTML = html;
+            }
+            
+            async function searchMedia() {
+                const query = document.getElementById('search-query').value;
+                const type = document.getElementById('media-type').value;
+                const response = await fetch(`/api/search?q=${query}&media_type=${type}&limit=50`);
+                const media = await response.json();
+                displayMedia(media);
+            }
+            
+            function displayMedia(media) {
+                if (media.length === 0) {
+                    document.getElementById('results-content').innerHTML = 'No media found';
+                    return;
+                }
+                let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;">';
+                media.forEach(item => {
+                    const icon = {'video': '🎬', 'photo': '🖼️', 'audio': '🎵', 'document': '📄', 'voice': '🎤'}[item.media_type] || '📎';
+                    html += `<div style="border: 1px solid #ddd; padding: 15px; border-radius: 8px;">
+                        <div style="font-size: 32px;">${icon}</div>
+                        <div style="font-weight: bold; margin: 10px 0;">${item.file_name || 'Unnamed'}</div>
+                        <div style="color: #666; font-size: 12px;">
+                            Type: ${item.media_type}<br>
+                            Size: ${formatBytes(item.file_size)}<br>
+                            Chat: ${item.chat_name}
+                        </div>
+                        <div style="margin-top: 10px;">
+                            ${item.media_type === 'video' ? `<button class="button" onclick="streamVideo(${item.id})">▶️ Stream</button>` : ''}
+                            <button class="button" onclick="downloadMedia(${item.id})">⬇️ Download</button>
+                        </div>
+                    </div>`;
+                });
+                html += '</div>';
+                document.getElementById('results-content').innerHTML = html;
+            }
+            
+            function streamVideo(mediaId) {
+                window.open(`/stream/${mediaId}`, '_blank');
+            }
+            
+            async function downloadMedia(mediaId) {
+                const response = await fetch(`/api/download/${mediaId}`, { method: 'POST' });
+                const data = await response.json();
+                alert(`Download queued! Queue ID: ${data.queue_id}`);
+            }
+            
+            function formatBytes(bytes) {
+                if (!bytes) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+            }
+            
+            // Load stats on page load
+            loadStats();
+        </script>
+    </body>
+    </html>
+    """
+
+
+# API Endpoints
+
+@app.get("/api/chats")
+async def get_chats(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_session)
+):
+    """Get all chats"""
+    result = await db.execute(
+        select(Chat).limit(limit).offset(offset)
+    )
+    chats = result.scalars().all()
+    return [
+        {
+            'id': chat.id,
+            'name': chat.name,
+            'username': chat.username,
+            'chat_type': chat.chat_type,
+            'member_count': chat.member_count,
+            'last_activity': chat.last_activity.isoformat() if chat.last_activity else None
+        }
+        for chat in chats
+    ]
+
+
+@app.get("/api/media")
+async def get_media(
+    chat_id: Optional[int] = None,
+    media_type: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_session)
+):
+    """Get media with filters"""
+    query = select(Media).join(Chat)
+    
+    if chat_id:
+        query = query.where(Media.chat_id == chat_id)
+    if media_type:
+        query = query.where(Media.media_type == media_type)
+    
+    query = query.limit(limit).offset(offset)
+    
+    result = await db.execute(query)
+    media_list = result.scalars().all()
+    
+    return [
+        {
+            'id': media.id,
+            'message_id': media.message_id,
+            'chat_id': media.chat_id,
+            'chat_name': media.chat.name,
+            'file_name': media.file_name,
+            'file_size': media.file_size,
+            'media_type': media.media_type,
+            'duration': media.duration,
+            'upload_date': media.upload_date.isoformat() if media.upload_date else None
+        }
+        for media in media_list
+    ]
+
+
+@app.get("/api/media/{media_id}")
+async def get_media_by_id(media_id: int, db: AsyncSession = Depends(get_session)):
+    """Get specific media"""
+    result = await db.execute(
+        select(Media).where(Media.id == media_id)
+    )
+    media = result.scalar_one_or_none()
+    
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    
+    return {
+        'id': media.id,
+        'message_id': media.message_id,
+        'chat_id': media.chat_id,
+        'file_name': media.file_name,
+        'file_size': media.file_size,
+        'media_type': media.media_type,
+        'duration': media.duration,
+        'width': media.width,
+        'height': media.height,
+        'mime_type': media.mime_type,
+        'upload_date': media.upload_date.isoformat() if media.upload_date else None
+    }
+
+
+@app.get("/api/search")
+async def search_media(
+    q: Optional[str] = None,
+    media_type: Optional[str] = None,
+    chat_id: Optional[int] = None,
+    min_size: Optional[int] = None,
+    max_size: Optional[int] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_session)
+):
+    """Search media"""
+    search_engine = SearchEngine(db)
+    results = await search_engine.search_media(
+        query=q,
+        media_type=media_type,
+        chat_id=chat_id,
+        min_size=min_size,
+        max_size=max_size,
+        limit=limit,
+        offset=offset
+    )
+    
+    return [
+        {
+            'id': media.id,
+            'message_id': media.message_id,
+            'chat_id': media.chat_id,
+            'chat_name': media.chat.name,
+            'file_name': media.file_name,
+            'file_size': media.file_size,
+            'media_type': media.media_type,
+            'upload_date': media.upload_date.isoformat() if media.upload_date else None
+        }
+        for media in results
+    ]
+
+
+@app.get("/api/stats")
+async def get_stats(db: AsyncSession = Depends(get_session)):
+    """Get statistics"""
+    search_engine = SearchEngine(db)
+    return await search_engine.get_stats()
+
+
+@app.post("/api/scan/chats")
+async def scan_chats(db: AsyncSession = Depends(get_session)):
+    """Scan all chats"""
+    scanner = MediaScanner(db)
+    count = await scanner.scan_all_chats()
+    return {'count': count}
+
+
+@app.post("/api/scan/media")
+async def scan_all_media(db: AsyncSession = Depends(get_session)):
+    """Scan media from all chats"""
+    scanner = MediaScanner(db)
+    count = await scanner.scan_all_media()
+    return {'count': count}
+
+
+@app.post("/api/scan/chat/{chat_id}")
+async def scan_chat_media(chat_id: int, db: AsyncSession = Depends(get_session)):
+    """Scan media from specific chat"""
+    scanner = MediaScanner(db)
+    count = await scanner.scan_chat_media(chat_id)
+    return {'count': count}
+
+
+@app.post("/api/scan/chat/{chat_id}/messages")
+async def scan_chat_messages(
+    chat_id: int,
+    limit: Optional[int] = Query(1000, description="Max messages to scan (default: 1000)"),
+    db: AsyncSession = Depends(get_session)
+):
+    """Scan text messages from specific chat"""
+    scanner = MediaScanner(db)
+    count = await scanner.scan_chat_messages(chat_id, limit=limit)
+    return {'count': count}
+
+
+@app.get("/api/messages")
+async def get_messages(
+    chat_id: Optional[int] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_session)
+):
+    """Get messages with filters"""
+    query = select(Message).join(Chat)
+    
+    if chat_id:
+        query = query.where(Message.chat_id == chat_id)
+    
+    if search:
+        query = query.where(Message.text.ilike(f'%{search}%'))
+    
+    query = query.order_by(Message.date.desc()).limit(limit).offset(offset)
+    
+    result = await db.execute(query)
+    messages = result.scalars().all()
+    
+    return [
+        {
+            'id': msg.id,
+            'message_id': msg.message_id,
+            'chat_id': msg.chat_id,
+            'text': msg.text,
+            'sender_id': msg.sender_id,
+            'sender_name': msg.sender_name,
+            'date': msg.date.isoformat() if msg.date else None,
+            'reply_to_message_id': msg.reply_to_message_id,
+            'forward_from': msg.forward_from,
+            'has_media': msg.has_media
+        }
+        for msg in messages
+    ]
+
+
+@app.get("/api/chat/{chat_id}/messages")
+async def get_chat_messages(
+    chat_id: int,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_session)
+):
+    """Get messages from a specific chat"""
+    result = await db.execute(
+        select(Message)
+        .where(Message.chat_id == chat_id)
+        .order_by(Message.date.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    messages = result.scalars().all()
+    
+    return [
+        {
+            'id': msg.id,
+            'message_id': msg.message_id,
+            'text': msg.text,
+            'sender_name': msg.sender_name,
+            'date': msg.date.isoformat() if msg.date else None,
+            'has_media': msg.has_media,
+            'reply_to_message_id': msg.reply_to_message_id,
+            'forward_from': msg.forward_from
+        }
+        for msg in messages
+    ]
+
+
+@app.post("/api/download/{media_id}")
+async def download_media(media_id: int, db: AsyncSession = Depends(get_session)):
+    """Queue media for download"""
+    downloader = MediaDownloader(db)
+    queue_id = await downloader.queue_download(media_id)
+    return {'queue_id': queue_id, 'status': 'queued'}
+
+
+@app.get("/stream/{media_id}")
+async def stream_media(media_id: int, request: Request, db: AsyncSession = Depends(get_session)):
+    """Stream media with range support"""
+    # Get media info
+    result = await db.execute(
+        select(Media).where(Media.id == media_id)
+    )
+    media = result.scalar_one_or_none()
+    
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    
+    # Get file size
+    file_size = await MediaStreamer.get_media_size(media.chat_id, media.message_id)
+    
+    if not file_size:
+        raise HTTPException(status_code=404, detail="Media size unavailable")
+    
+    # Parse range header
+    range_header = request.headers.get('range')
+    start = 0
+    end = file_size - 1
+    
+    if range_header:
+        range_match = range_header.replace('bytes=', '').split('-')
+        start = int(range_match[0]) if range_match[0] else 0
+        end = int(range_match[1]) if len(range_match) > 1 and range_match[1] else end
+    
+    # Stream media
+    async def stream_generator():
+        async for chunk in telegram_client.stream_media(media.chat_id, media.message_id, offset=start, limit=end-start+1):
+            yield chunk
+    
+    headers = {
+        'Content-Range': f'bytes {start}-{end}/{file_size}',
+        'Accept-Ranges': 'bytes',
+        'Content-Length': str(end - start + 1),
+        'Content-Type': media.mime_type or 'application/octet-stream'
+    }
+    
+    status_code = 206 if range_header else 200
+    
+    return StreamingResponse(stream_generator(), status_code=status_code, headers=headers)
+
+
+@app.get("/api/queue")
+async def get_download_queue(db: AsyncSession = Depends(get_session)):
+    """Get download queue status"""
+    result = await db.execute(
+        select(DownloadQueue).order_by(DownloadQueue.created_at.desc()).limit(50)
+    )
+    queue_items = result.scalars().all()
+    
+    return [
+        {
+            'id': item.id,
+            'media_id': item.media_id,
+            'status': item.status,
+            'progress': item.progress,
+            'error_message': item.error_message,
+            'created_at': item.created_at.isoformat()
+        }
+        for item in queue_items
+    ]

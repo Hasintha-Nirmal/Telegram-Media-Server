@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Telegram Media Server</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
+        .header h1 { font-size: 32px; margin-bottom: 10px; }
+        .header p { opacity: 0.9; }
+        
+        .step-container { background: white; padding: 30px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .step-header { display: flex; align-items: center; margin-bottom: 20px; }
+        .step-number { background: #667eea; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 15px; }
+        .step-title { font-size: 24px; font-weight: 600; }
+        
+        .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
+        .search-box input { flex: 1; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; }
+        .search-box input:focus { outline: none; border-color: #667eea; }
+        
+        .button { background: #667eea; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: 500; transition: all 0.3s; }
+        .button:hover { background: #5568d3; transform: translateY(-2px); }
+        .button:disabled { background: #ccc; cursor: not-allowed; transform: none; }
+        .button-secondary { background: #48bb78; }
+        .button-secondary:hover { background: #38a169; }
+        
+        .chat-list { display: grid; gap: 15px; max-height: 600px; overflow-y: auto; }
+        .chat-item { background: #f9f9f9; padding: 20px; border-radius: 8px; border: 2px solid transparent; cursor: pointer; transition: all 0.3s; }
+        .chat-item:hover { border-color: #667eea; background: white; }
+        .chat-item.selected { border-color: #667eea; background: #f0f4ff; }
+        .chat-name { font-size: 18px; font-weight: 600; margin-bottom: 5px; }
+        .chat-meta { color: #666; font-size: 14px; }
+        .chat-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px; }
+        .badge-channel { background: #ffd700; color: #000; }
+        .badge-group { background: #48bb78; color: white; }
+        .badge-private { background: #667eea; color: white; }
+        
+        .action-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+        
+        .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+        .media-card { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .media-icon { font-size: 48px; padding: 30px; text-align: center; background: #f9f9f9; }
+        .media-info { padding: 15px; }
+        .media-title { font-weight: 600; margin-bottom: 8px; word-break: break-word; }
+        .media-meta { color: #666; font-size: 14px; margin-bottom: 10px; }
+        
+        .message-list { display: flex; flex-direction: column; gap: 15px; }
+        .message-card { background: white; padding: 20px; border-radius: 8px; border-left: 4px solid #667eea; }
+        .message-header { display: flex; justify-content: space-between; margin-bottom: 10px; }
+        .message-sender { font-weight: 600; color: #667eea; }
+        .message-date { color: #999; font-size: 14px; }
+        .message-text { white-space: pre-wrap; line-height: 1.6; }
+        
+        .loading { text-align: center; padding: 40px; color: #667eea; }
+        .loading::after { content: '...'; animation: dots 1.5s steps(4, end) infinite; }
+        @keyframes dots { 0%, 20% { content: '.'; } 40% { content: '..'; } 60%, 100% { content: '...'; } }
+        
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: white; padding: 20px; border-radius: 8px; text-align: center; }
+        .stat-value { font-size: 32px; font-weight: bold; color: #667eea; }
+        .stat-label { color: #666; margin-top: 5px; }
+        
+        .hidden { display: none; }
+        
+        .info-box { background: #e6f7ff; border-left: 4px solid #1890ff; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📱 Telegram Media Server</h1>
+            <p>Browse and manage your Telegram media safely - one chat at a time</p>
+        </div>
+        
+        <!-- Step 1: Load Chats -->
+        <div class="step-container">
+            <div class="step-header">
+                <div class="step-number">1</div>
+                <div class="step-title">Load Your Chats</div>
+            </div>
+            <div class="info-box">
+                ℹ️ This only fetches chat names and metadata. No messages or media are scanned yet.
+            </div>
+            <button class="button" onclick="loadChats()">🔍 Load Chats</button>
+            <div id="chat-stats" class="stats hidden" style="margin-top: 20px;"></div>
+        </div>
+        
+        <!-- Step 2: Select a Chat -->
+        <div class="step-container">
+            <div class="step-header">
+                <div class="step-number">2</div>
+                <div class="step-title">Select a Chat</div>
+            </div>
+            <div class="search-box">
+                <input type="text" id="chat-search" placeholder="Search chats by name..." oninput="filterChats()">
+                <select id="type-filter" onchange="filterChats()" style="padding: 12px; border: 2px solid #ddd; border-radius: 6px;">
+                    <option value="">All Types</option>
+                    <option value="channel">Channels</option>
+                    <option value="supergroup">Supergroups</option>
+                    <option value="group">Groups</option>
+                    <option value="private">Private</option>
+                    <option value="bot">Bots</option>
+                </select>
+            </div>
+            <div id="chat-list" class="chat-list">
+                <p style="text-align: center; color: #999; padding: 40px;">Click "Load Chats" to get started</p>
+            </div>
+        </div>
+        
+        <!-- Step 3: Choose Action -->
+        <div class="step-container hidden" id="action-panel">
+            <div class="step-header">
+                <div class="step-number">3</div>
+                <div class="step-title">What do you want to see?</div>
+            </div>
+            <div id="selected-chat-info" style="background: #f0f4ff; padding: 15px; border-radius: 8px; margin-bottom: 20px;"></div>
+            <div class="action-buttons">
+                <button class="button button-secondary" onclick="scanAndViewMedia()">🎬 Scan & View Media</button>
+                <button class="button button-secondary" onclick="scanAndViewMessages()">💭 Scan & View Messages (1000 latest)</button>
+                <button class="button" onclick="viewExistingMedia()">📂 View Existing Media</button>
+                <button class="button" onclick="viewExistingMessages()">💬 View Existing Messages</button>
+            </div>
+            <div class="info-box" style="margin-top: 15px;">
+                <strong>Scan:</strong> Fetches new data from Telegram (may take time)<br>
+                <strong>View Existing:</strong> Shows already scanned data (instant)
+            </div>
+        </div>
+        
+        <!-- Results -->
+        <div class="step-container hidden" id="results-panel">
+            <div class="step-header">
+                <div class="step-number">4</div>
+                <div class="step-title">Results</div>
+            </div>
+            <div id="results-content"></div>
+        </div>
+    </div>
+    
+    <script>
+        let allChats = [];
+        let selectedChat = null;
+        
+        async function loadChats() {
+            document.getElementById('chat-list').innerHTML = '<div class="loading">Loading chats</div>';
+            
+            try {
+                const response = await fetch('/api/scan/chats', { method: 'POST' });
+                const data = await response.json();
+                
+                const chatsResponse = await fetch('/api/chats?limit=10000');
+                allChats = await chatsResponse.json();
+                
+                document.getElementById('chat-stats').innerHTML = `
+                    <div class="stat-card">
+                        <div class="stat-value">${allChats.length}</div>
+                        <div class="stat-label">Total Chats</div>
+                    </div>
+                `;
+                document.getElementById('chat-stats').classList.remove('hidden');
+                
+                displayChats(allChats);
+            } catch (error) {
+                document.getElementById('chat-list').innerHTML = '<p style="color: red;">Error loading chats: ' + error.message + '</p>';
+            }
+        }
+        
+        function displayChats(chats) {
+            if (chats.length === 0) {
+                document.getElementById('chat-list').innerHTML = '<p style="text-align: center; padding: 40px; color: #999;">No chats found</p>';
+                return;
+            }
+            
+            let html = '';
+            chats.forEach(chat => {
+                const badgeClass = 'badge-' + (chat.chat_type === 'supergroup' ? 'group' : chat.chat_type);
+                html += `
+                    <div class="chat-item" onclick="selectChat(${chat.id})">
+                        <div class="chat-name">${escapeHtml(chat.name)}</div>
+                        <div class="chat-meta">
+                            <span class="chat-badge ${badgeClass}">${chat.chat_type}</span>
+                            ${chat.username ? '@' + escapeHtml(chat.username) : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            document.getElementById('chat-list').innerHTML = html;
+        }
+        
+        function filterChats() {
+            const searchTerm = document.getElementById('chat-search').value.toLowerCase();
+            const typeFilter = document.getElementById('type-filter').value;
+            
+            const filtered = allChats.filter(chat => {
+                const matchesSearch = chat.name.toLowerCase().includes(searchTerm) || 
+                                    (chat.username && chat.username.toLowerCase().includes(searchTerm));
+                const matchesType = !typeFilter || chat.chat_type === typeFilter;
+                return matchesSearch && matchesType;
+            });
+            
+            displayChats(filtered);
+        }
+        
+        function selectChat(chatId) {
+            selectedChat = allChats.find(c => c.id === chatId);
+            
+            // Update UI
+            document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('selected'));
+            event.target.closest('.chat-item').classList.add('selected');
+            
+            // Show action panel
+            document.getElementById('action-panel').classList.remove('hidden');
+            const badgeClass = 'badge-' + (selectedChat.chat_type === 'supergroup' ? 'group' : selectedChat.chat_type);
+            document.getElementById('selected-chat-info').innerHTML = `
+                <strong>Selected:</strong> ${escapeHtml(selectedChat.name)} 
+                <span class="chat-badge ${badgeClass}">${selectedChat.chat_type}</span>
+            `;
+            
+            // Scroll to action panel
+            document.getElementById('action-panel').scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        async function scanAndViewMedia() {
+            if (!selectedChat) return;
+            
+            showResults('<div class="loading">Scanning media from ' + escapeHtml(selectedChat.name) + '</div>');
+            
+            try {
+                const response = await fetch(`/api/scan/chat/${selectedChat.id}`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.count === 0) {
+                    showResults('<p style="text-align: center; padding: 40px;">No media found in this chat</p>');
+                    return;
+                }
+                
+                showResults('<div class="loading">Found ' + data.count + ' media items, loading...</div>');
+                await viewExistingMedia();
+            } catch (error) {
+                showResults('<p style="color: red;">Error: ' + error.message + '</p>');
+            }
+        }
+        
+        async function scanAndViewMessages() {
+            if (!selectedChat) return;
+            
+            showResults('<div class="loading">Scanning messages from ' + escapeHtml(selectedChat.name) + ' (this may take a minute)</div>');
+            
+            try {
+                const response = await fetch(`/api/scan/chat/${selectedChat.id}/messages?limit=1000`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.count === 0) {
+                    showResults('<p style="text-align: center; padding: 40px;">No messages found in this chat</p>');
+                    return;
+                }
+                
+                showResults('<div class="loading">Found ' + data.count + ' messages, loading...</div>');
+                await viewExistingMessages();
+            } catch (error) {
+                showResults('<p style="color: red;">Error: ' + error.message + '</p>');
+            }
+        }
+        
+        async function viewExistingMedia() {
+            if (!selectedChat) return;
+            
+            showResults('<div class="loading">Loading media</div>');
+            
+            try {
+                const response = await fetch(`/api/media?chat_id=${selectedChat.id}&limit=100`);
+                const media = await response.json();
+                
+                if (media.length === 0) {
+                    showResults('<p style="text-align: center; padding: 40px;">No media found. Click "Scan & View Media" to fetch from Telegram.</p>');
+                    return;
+                }
+                
+                displayMedia(media);
+            } catch (error) {
+                showResults('<p style="color: red;">Error: ' + error.message + '</p>');
+            }
+        }
+        
+        async function viewExistingMessages() {
+            if (!selectedChat) return;
+            
+            showResults('<div class="loading">Loading messages</div>');
+            
+            try {
+                const response = await fetch(`/api/chat/${selectedChat.id}/messages?limit=100`);
+                const messages = await response.json();
+                
+                if (messages.length === 0) {
+                    showResults('<p style="text-align: center; padding: 40px;">No messages found. Click "Scan & View Messages" to fetch from Telegram.</p>');
+                    return;
+                }
+                
+                displayMessages(messages);
+            } catch (error) {
+                showResults('<p style="color: red;">Error: ' + error.message + '</p>');
+            }
+        }
+        
+        function displayMedia(media) {
+            const icons = {video: '🎬', photo: '🖼️', audio: '🎵', document: '📄', voice: '🎤', gif: '🎞️'};
+            
+            let html = '<div class="media-grid">';
+            media.forEach(item => {
+                const icon = icons[item.media_type] || '📎';
+                const size = formatBytes(item.file_size);
+                html += `
+                    <div class="media-card">
+                        <div class="media-icon">${icon}</div>
+                        <div class="media-info">
+                            <div class="media-title">${escapeHtml(item.file_name || 'Unnamed')}</div>
+                            <div class="media-meta">
+                                Type: ${item.media_type}<br>
+                                Size: ${size}
+                                ${item.duration ? '<br>Duration: ' + formatDuration(item.duration) : ''}
+                            </div>
+                            ${item.media_type === 'video' ? 
+                                `<button class="button" style="width: 100%; margin-top: 10px;" onclick="streamVideo(${item.id})">▶️ Stream</button>` : 
+                                ''}
+                            <button class="button button-secondary" style="width: 100%; margin-top: 10px;" onclick="downloadMedia(${item.id})">⬇️ Download</button>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            showResults(html);
+        }
+        
+        function displayMessages(messages) {
+            let html = '<div class="message-list">';
+            messages.forEach(msg => {
+                const date = new Date(msg.date).toLocaleString();
+                html += `
+                    <div class="message-card">
+                        <div class="message-header">
+                            <span class="message-sender">${escapeHtml(msg.sender_name || 'Unknown')}</span>
+                            <span class="message-date">${date}</span>
+                        </div>
+                        <div class="message-text">${escapeHtml(msg.text || '(No text)')}</div>
+                        ${msg.has_media ? '<div style="margin-top: 10px; color: #667eea;">📎 Has media attachment</div>' : ''}
+                    </div>
+                `;
+            });
+            html += '</div>';
+            showResults(html);
+        }
+        
+        function showResults(html) {
+            document.getElementById('results-content').innerHTML = html;
+            document.getElementById('results-panel').classList.remove('hidden');
+            document.getElementById('results-panel').scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function streamVideo(mediaId) {
+            window.open(`/stream/${mediaId}`, '_blank');
+        }
+        
+        async function downloadMedia(mediaId) {
+            try {
+                const response = await fetch(`/api/download/${mediaId}`, { method: 'POST' });
+                const data = await response.json();
+                alert('Download queued! Queue ID: ' + data.queue_id);
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        function formatBytes(bytes) {
+            if (!bytes) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+        
+        function formatDuration(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
