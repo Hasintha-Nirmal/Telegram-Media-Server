@@ -123,11 +123,14 @@
                 <button class="button" onclick="viewExistingMedia()">📂 View Existing Media</button>
                 <button class="button" onclick="viewExistingMessages()">💬 View Existing Messages</button>
                 <button class="button" onclick="fullRescanMedia()" style="background: #f56565;">🔄 Full Rescan Media</button>
+                <button class="button" onclick="viewDownloadQueue()" style="background: #ed8936;">📥 View Downloads</button>
             </div>
             <div class="info-box" style="margin-top: 15px;">
                 <strong>Scan:</strong> Fetches new data from Telegram (incremental)<br>
                 <strong>Full Rescan:</strong> Scans ALL messages from beginning (use if media is missing)<br>
-                <strong>View Existing:</strong> Shows already scanned data (instant)
+                <strong>View Existing:</strong> Shows already scanned data (instant)<br>
+                <strong>Stream:</strong> Watch videos directly (may be slow for large files)<br>
+                <strong>Download:</strong> Saves to server (check "View Downloads" for progress)
             </div>
         </div>
         
@@ -427,9 +430,63 @@
             try {
                 const response = await fetch(`/api/download/${mediaId}`, { method: 'POST' });
                 const data = await response.json();
-                alert('Download queued! Queue ID: ' + data.queue_id);
+                
+                // Show better message
+                const message = `✅ Download queued!\n\nQueue ID: ${data.queue_id}\n\nThe file will be downloaded to your server in the background.\nClick "View Downloads" to check progress.`;
+                alert(message);
             } catch (error) {
                 alert('Error: ' + error.message);
+            }
+        }
+        
+        async function viewDownloadQueue() {
+            showResults('<div class="loading">Loading download queue</div>');
+            
+            try {
+                const response = await fetch('/api/queue');
+                const queue = await response.json();
+                
+                if (queue.length === 0) {
+                    showResults('<p style="text-align: center; padding: 40px;">No downloads in queue</p>');
+                    return;
+                }
+                
+                let html = '<div style="max-width: 800px;"><h3 style="margin-bottom: 20px;">Download Queue</h3>';
+                queue.forEach(item => {
+                    const statusColors = {
+                        'pending': '#ffa500',
+                        'downloading': '#4CAF50',
+                        'completed': '#2196F3',
+                        'failed': '#f44336'
+                    };
+                    const statusColor = statusColors[item.status] || '#999';
+                    const progress = item.progress || 0;
+                    
+                    html += `
+                        <div style="background: white; padding: 20px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid ${statusColor};">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                <strong>Queue ID: ${item.id}</strong>
+                                <span style="color: ${statusColor}; font-weight: bold;">${item.status.toUpperCase()}</span>
+                            </div>
+                            <div style="color: #666; margin-bottom: 10px;">
+                                Media ID: ${item.media_id}<br>
+                                Created: ${new Date(item.created_at).toLocaleString()}
+                            </div>
+                            ${item.status === 'downloading' ? `
+                                <div style="background: #f0f0f0; height: 20px; border-radius: 10px; overflow: hidden;">
+                                    <div style="background: #4CAF50; height: 100%; width: ${progress}%; transition: width 0.3s;"></div>
+                                </div>
+                                <div style="text-align: center; margin-top: 5px;">${progress.toFixed(1)}%</div>
+                            ` : ''}
+                            ${item.error_message ? `<div style="color: #f44336; margin-top: 10px;">Error: ${item.error_message}</div>` : ''}
+                            ${item.completed_at ? `<div style="color: #4CAF50; margin-top: 10px;">✅ Completed: ${new Date(item.completed_at).toLocaleString()}</div>` : ''}
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                showResults(html);
+            } catch (error) {
+                showResults('<p style="color: red;">Error: ' + error.message + '</p>');
             }
         }
         

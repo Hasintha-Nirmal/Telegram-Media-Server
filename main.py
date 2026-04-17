@@ -1,11 +1,10 @@
 import asyncio
 import logging
 import uvicorn
-from web.api import app
 from app.config import settings
-from app.telegram_client import telegram_client
 from database import async_session
 from app.scanner import MediaScanner
+from app.downloader import MediaDownloader
 import os
 
 # Configure logging
@@ -39,6 +38,21 @@ async def auto_sync_task():
             logger.error(f"Auto-sync failed: {e}")
 
 
+async def download_queue_worker():
+    """Background task for processing download queue"""
+    logger.info("Starting download queue worker...")
+    
+    while True:
+        try:
+            async with async_session() as session:
+                downloader = MediaDownloader(session)
+                await downloader.process_queue()
+                
+        except Exception as e:
+            logger.error(f"Download queue worker error: {e}")
+            await asyncio.sleep(5)
+
+
 def main():
     """Main entry point"""
     # Ensure data directories exist
@@ -46,14 +60,10 @@ def main():
     os.makedirs('/data/downloads', exist_ok=True)
     os.makedirs('/data/database', exist_ok=True)
     
-    # Start auto-sync task in background
-    loop = asyncio.get_event_loop()
-    loop.create_task(auto_sync_task())
-    
     # Start web server
     logger.info(f"Starting server on http://0.0.0.0:8080")
     uvicorn.run(
-        app,
+        "web.api:app",
         host="0.0.0.0",
         port=8080,
         log_level="info"

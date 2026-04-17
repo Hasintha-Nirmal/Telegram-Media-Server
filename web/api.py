@@ -14,10 +14,14 @@ from typing import Optional, List
 from datetime import datetime
 import logging
 import os
+import asyncio
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Telegram Media Server", version="1.0.0")
+
+# Background task references
+background_tasks = []
 
 
 # Startup event
@@ -32,6 +36,14 @@ async def startup_event():
     # Connect to Telegram
     await telegram_client.connect()
     
+    # Start background workers
+    from main import auto_sync_task, download_queue_worker
+    
+    logger.info("Starting background workers...")
+    background_tasks.append(asyncio.create_task(auto_sync_task()))
+    background_tasks.append(asyncio.create_task(download_queue_worker()))
+    logger.info("Background workers started")
+    
     logger.info("Application started successfully")
 
 
@@ -39,7 +51,11 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
+    logger.info("Shutting down background workers...")
+    for task in background_tasks:
+        task.cancel()
     await telegram_client.disconnect()
+    logger.info("Shutdown complete")
 
 
 # Root endpoint with new safe UI
@@ -185,6 +201,29 @@ async def download_media(media_id: int, db: AsyncSession = Depends(get_session))
     downloader = MediaDownloader(db)
     queue_id = await downloader.queue_download(media_id)
     return {'queue_id': queue_id, 'status': 'queued'}
+
+
+@app.get("/api/queue")
+async def get_download_queue(db: AsyncSession = Depends(get_session)):
+    """Get download queue status"""
+    result = await db.execute(
+        select(DownloadQueue).order_by(DownloadQueue.created_at.desc()).limit(50)
+    )
+    queue_items = result.scalars().all()
+    
+    return [
+        {
+            'id': item.id,
+            'media_id': item.media_id,
+            'status': item.status,
+            'progress': item.progress,
+            'error_message': item.error_message,
+            'created_at': item.created_at.isoformat() if item.created_at else None,
+            'started_at': item.started_at.isoformat() if item.started_at else None,
+            'completed_at': item.completed_at.isoformat() if item.completed_at else None
+        }
+        for item in queue_items
+    ]
 
 
 @app.get("/stream/{media_id}")
