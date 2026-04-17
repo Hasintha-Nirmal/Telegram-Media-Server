@@ -8,11 +8,27 @@ A self-hosted media server that indexes all media from your Telegram chats and p
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-brightgreen.svg)
 
-## ✨ Features
+## 📚 Documentation
+
+All documentation has been moved to the [docs/](docs/) folder for better organization.
+
+**Quick Links:**
+- 📖 [Documentation Index](docs/README.md) - Complete documentation overview
+- 🚀 [Quick Start Guide](docs/QUICKSTART.md) - Get started in 5 minutes
+- ⚙️ [Setup Instructions](docs/SETUP.md) - Detailed setup guide
+- 🔧 [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
+- 🔐 [Session Management](docs/SESSION_MANAGEMENT.md) - Multi-account guide
+- 📡 [API Documentation](docs/API.md) - REST API reference
+- ❓ [FAQ](docs/FAQ.md) - Frequently asked questions
+
+See [DOCS.md](DOCS.md) for a complete quick reference guide.
+
+## ✨ Key Features
 
 ### Core Features
-- 🔐 **Session-based authentication** - No password required, uses existing Telegram session
+- � **Session-based authentication** - No password required, uses existing Telegram session
 - 👥 **Multi-account support** - Create, upload, and switch between multiple Telegram accounts in the web UI
+- 🔒 **Privacy isolation** - Each account has its own separate database
 - 🔍 **Automatic discovery** - Scans all your chats (channels, groups, private chats, bots)
 - 🎥 **Video streaming** - Stream videos directly in browser with seeking support
 - 🔍 **Powerful search** - Search by filename, chat, type, size, and date
@@ -29,26 +45,95 @@ A self-hosted media server that indexes all media from your Telegram chats and p
 - Voice messages
 - GIFs
 
-### Technical Highlights
-- **Streaming**: HTTP range requests for progressive video playback
-- **Performance**: Async I/O, optimized database queries, incremental scanning
-- **Scalability**: SQLite for single-user, PostgreSQL for production
-- **Organization**: Auto-organizes downloads by chat type and name
-- **API**: RESTful API for integration with other tools
-
 ## 🚀 Quick Start
 
-### Prerequisites
-- Docker and Docker Compose
-- Telegram API credentials ([get them here](https://my.telegram.org))
-- Telegram session file
+```bash
+# 1. Clone the repository
+git clone <repository-url>
+cd telegram-media-server
 
-### 1. Get API Credentials
-1. Visit https://my.telegram.org
-2. Log in and go to "API development tools"
-3. Create an app and copy `api_id` and `api_hash`
+# 2. Get Telegram API credentials from https://my.telegram.org
 
-### 2. Create Session File
+# 3. Create .env file
+cp .env.example .env
+# Edit .env and add your API_ID and API_HASH
+
+# 4. Create session file
+python scripts/create_session.py
+
+# 5. Start the server
+docker-compose up
+
+# 6. Open http://localhost:8080
+```
+
+For detailed instructions, see [docs/QUICKSTART.md](docs/QUICKSTART.md)
+
+## 🎯 Use Cases
+
+- **Personal Cloud Storage** - Use Telegram as unlimited cloud storage
+- **Media Library** - Organize and stream your media collection
+- **Content Archival** - Archive important media from channels/groups
+- **Multi-Account Management** - Manage multiple Telegram accounts
+- **Family Sharing** - Share media server with family members
+
+## 🔒 Privacy & Security
+
+- **Per-Account Isolation** - Each account has its own database
+- **No Data Sharing** - Complete privacy between accounts
+- **Local Storage** - All data stays on your server
+- **Session-Based Auth** - No passwords stored
+- **Docker Isolation** - Containerized for security
+
+## 🛠️ Technology Stack
+
+- **Backend**: Python 3.11, FastAPI, SQLAlchemy
+- **Database**: SQLite (default) or PostgreSQL
+- **Telegram**: Telethon library
+- **Frontend**: HTML5, Vanilla JavaScript
+- **Deployment**: Docker, Docker Compose
+
+## 📖 Documentation Structure
+
+```
+docs/
+├── README.md                      # Documentation index
+├── QUICKSTART.md                  # Quick start guide
+├── SETUP.md                       # Detailed setup
+├── API.md                         # API documentation
+├── FEATURES.md                    # Feature list
+├── ARCHITECTURE.md                # System architecture
+├── SESSION_MANAGEMENT.md          # Multi-account guide
+├── SESSION_TROUBLESHOOTING.md     # Session issues
+├── TROUBLESHOOTING.md             # General troubleshooting
+├── FAQ.md                         # FAQ
+├── PRIVACY_FIX.md                 # Privacy isolation details
+└── REBUILD.md                     # Rebuild instructions
+```
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📝 License
+
+MIT License - See LICENSE file for details
+
+## 🙏 Acknowledgments
+
+- [Telethon](https://github.com/LonamiWebs/Telethon) - Telegram client library
+- [FastAPI](https://fastapi.tiangolo.com/) - Modern web framework
+- [SQLAlchemy](https://www.sqlalchemy.org/) - Database ORM
+
+## 📞 Support
+
+- Check [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common issues
+- Check [docs/FAQ.md](docs/FAQ.md) for frequently asked questions
+- Open an issue for bugs or feature requests
+
+---
+
+Made with ❤️ for the Telegram community
 ```bash
 pip install telethon
 python -c "
