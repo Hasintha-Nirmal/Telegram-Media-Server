@@ -311,6 +311,11 @@
             media.forEach(item => {
                 const icon = icons[item.media_type] || '📎';
                 const size = formatBytes(item.file_size);
+                
+                // Check if it's a video file (by type or extension)
+                const isVideo = item.media_type === 'video' || 
+                               (item.file_name && /\.(mp4|mkv|avi|mov|wmv|flv|webm|m4v|3gp)$/i.test(item.file_name));
+                
                 html += `
                     <div class="media-card">
                         <div class="media-icon">${icon}</div>
@@ -321,7 +326,7 @@
                                 Size: ${size}
                                 ${item.duration ? '<br>Duration: ' + formatDuration(item.duration) : ''}
                             </div>
-                            ${item.media_type === 'video' ? 
+                            ${isVideo ? 
                                 `<button class="button" style="width: 100%; margin-top: 10px;" onclick="streamVideo(${item.id})">▶️ Stream</button>` : 
                                 ''}
                             <button class="button button-secondary" style="width: 100%; margin-top: 10px;" onclick="downloadMedia(${item.id})">⬇️ Download</button>
@@ -344,12 +349,41 @@
                             <span class="message-date">${date}</span>
                         </div>
                         <div class="message-text">${escapeHtml(msg.text || '(No text)')}</div>
-                        ${msg.has_media ? '<div style="margin-top: 10px; color: #667eea;">📎 Has media attachment</div>' : ''}
+                        ${msg.has_media ? `
+                            <div style="margin-top: 10px;">
+                                <span style="color: #667eea;">📎 Has media attachment</span>
+                                <button class="button" style="margin-left: 10px; padding: 6px 12px; font-size: 14px;" onclick="viewMessageMedia(${msg.message_id})">View Media</button>
+                            </div>
+                        ` : ''}
                     </div>
                 `;
             });
             html += '</div>';
             showResults(html);
+        }
+        
+        async function viewMessageMedia(messageId) {
+            if (!selectedChat) return;
+            
+            showResults('<div class="loading">Loading media for this message</div>');
+            
+            try {
+                // Fetch media for this specific message
+                const response = await fetch(`/api/media?chat_id=${selectedChat.id}&limit=1000`);
+                const allMedia = await response.json();
+                
+                // Filter to find media with matching message_id
+                const messageMedia = allMedia.filter(m => m.message_id === messageId);
+                
+                if (messageMedia.length === 0) {
+                    showResults('<p style="text-align: center; padding: 40px;">Media not indexed yet. Click "Scan & View Media" first.</p>');
+                    return;
+                }
+                
+                displayMedia(messageMedia);
+            } catch (error) {
+                showResults('<p style="color: red;">Error: ' + error.message + '</p>');
+            }
         }
         
         function showResults(html) {

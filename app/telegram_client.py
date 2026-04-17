@@ -176,9 +176,29 @@ class TelegramMediaClient:
                 elif doc.mime_type.startswith('image/'):
                     media_data['media_type'] = 'photo'
                 else:
-                    media_data['media_type'] = 'document'
+                    # Check if it's a video file by extension
+                    if media_data.get('file_name'):
+                        ext = media_data['file_name'].lower().split('.')[-1]
+                        if ext in ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', '3gp']:
+                            media_data['media_type'] = 'video'
+                        else:
+                            media_data['media_type'] = 'document'
+                    else:
+                        media_data['media_type'] = 'document'
             else:
-                media_data['media_type'] = 'document'
+                # No mime type, check by extension
+                if media_data.get('file_name'):
+                    ext = media_data['file_name'].lower().split('.')[-1]
+                    if ext in ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', '3gp']:
+                        media_data['media_type'] = 'video'
+                    elif ext in ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a']:
+                        media_data['media_type'] = 'audio'
+                    elif ext in ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']:
+                        media_data['media_type'] = 'photo'
+                    else:
+                        media_data['media_type'] = 'document'
+                else:
+                    media_data['media_type'] = 'document'
             
             if not media_data['file_name']:
                 ext = doc.mime_type.split('/')[-1] if doc.mime_type else 'bin'
