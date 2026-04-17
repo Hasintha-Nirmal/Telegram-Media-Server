@@ -16,6 +16,10 @@ class MediaScanner:
         logger.info("Starting chat discovery...")
         dialogs = await telegram_client.get_dialogs()
         
+        # Log sample of what we're getting
+        if dialogs:
+            logger.info(f"Sample chat data: id={dialogs[0].get('id')}, name={dialogs[0].get('name')}, type={dialogs[0].get('chat_type')}")
+        
         for dialog_data in dialogs:
             await self._save_chat(dialog_data)
         

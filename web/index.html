@@ -298,12 +298,14 @@
             let html = '';
             chats.forEach(chat => {
                 const badgeClass = 'badge-' + (chat.chat_type === 'supergroup' ? 'group' : chat.chat_type);
+                // Use name, or username, or "Unnamed Chat" as fallback
+                const displayName = chat.name || (chat.username ? '@' + chat.username : 'Unnamed Chat');
                 html += `
                     <div class="chat-item" onclick="selectChat(${chat.id})">
-                        <div class="chat-name">${escapeHtml(chat.name)}</div>
+                        <div class="chat-name">${escapeHtml(displayName)}</div>
                         <div class="chat-meta">
                             <span class="chat-badge ${badgeClass}">${chat.chat_type}</span>
-                            ${chat.username ? '@' + escapeHtml(chat.username) : ''}
+                            ${chat.username && chat.name ? '@' + escapeHtml(chat.username) : ''}
                         </div>
                     </div>
                 `;

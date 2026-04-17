@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database import get_session, init_db
 from database.models import Chat, Media, DownloadQueue, Message
+from database.manager import db_manager
 from app.telegram_client import telegram_client
 from app.scanner import MediaScanner
 from app.downloader import MediaDownloader
@@ -100,6 +101,14 @@ async def get_chats(
         select(Chat).limit(limit).offset(offset)
     )
     chats = result.scalars().all()
+    
+    logger.info(f"Returning {len(chats)} chats for account: {db_manager.current_account}")
+    
+    # Log first few chats for debugging
+    if chats:
+        for i, chat in enumerate(chats[:3]):
+            logger.info(f"Chat {i}: id={chat.id}, name={chat.name}, type={chat.chat_type}")
+    
     return [
         {
             'id': chat.id,
