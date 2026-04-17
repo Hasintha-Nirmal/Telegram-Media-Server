@@ -85,7 +85,9 @@ async def get_media(
     db: AsyncSession = Depends(get_session)
 ):
     """Get media with filters"""
-    query = select(Media).join(Chat)
+    from sqlalchemy.orm import selectinload
+    
+    query = select(Media).options(selectinload(Media.chat))
     
     if chat_id:
         query = query.where(Media.chat_id == chat_id)
@@ -102,7 +104,7 @@ async def get_media(
             'id': media.id,
             'message_id': media.message_id,
             'chat_id': media.chat_id,
-            'chat_name': media.chat.name,
+            'chat_name': media.chat.name if media.chat else 'Unknown',
             'file_name': media.file_name,
             'file_size': media.file_size,
             'media_type': media.media_type,
